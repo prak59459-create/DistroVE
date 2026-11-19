@@ -99,7 +99,7 @@ final class Renderer3D: @unchecked Sendable {
         guard let library = try? device.makeLibrary(source: Renderer3D.shaderSource, options: nil),
               let vertexFunction = library.makeFunction(name: "vertex3d"),
               let fragmentFunction = library.makeFunction(name: "fragment3d") else { return nil }
-        let samples: Int = device.supportsTextureSampleCount(4) ? 4 : 1
+        let samples: Int = Renderer3D.sampleCount(device, wanted: DevicePerformance.current.profile.sampleCount3D)
         let descriptor = MTLRenderPipelineDescriptor()
         descriptor.vertexFunction = vertexFunction
         descriptor.fragmentFunction = fragmentFunction
@@ -130,6 +130,14 @@ final class Renderer3D: @unchecked Sendable {
         var created: CVMetalTextureCache?
         CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &created)
         self.textureCache = created
+    }
+
+    /// 端末の性能（Q81）に合わせた縁のなめらかさ。対応していない数なら下げる。
+    static func sampleCount(_ device: MTLDevice, wanted: Int) -> Int {
+        for count in [4, 2] where count <= wanted && device.supportsTextureSampleCount(count) {
+            return count
+        }
+        return 1
     }
 
     static func vertexDescriptor() -> MTLVertexDescriptor {

@@ -54,92 +54,114 @@ struct HomeView: View {
     private let columns: [GridItem] = [GridItem(.adaptive(minimum: 220, maximum: 320), spacing: 16)]
 
     var body: some View {
+        withDialogs(withSheets(mainStack))
+    }
+
+    private var mainStack: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    if let id = interrupted, let summary = projects.first(where: { $0.id == id }) {
-                        recoveryBanner(summary)
-                    }
-                    HStack(spacing: 12) {
-                        bigButton("新規プロジェクト", "plus", primary: true) { showNew = true }
-                        bigButton("テンプレート", "square.grid.2x2") { showTemplates = true }
-                        bigButton(".disve を開く", "folder") { showImport = true }
-                    }
-                    Text("プロジェクト").font(.title3.weight(.bold)).foregroundStyle(Theme.text)
-                    if projects.isEmpty {
-                        Text("まだプロジェクトがありません。「新規プロジェクト」か「テンプレート」から始めましょう。")
-                            .font(.footnote)
-                            .foregroundStyle(Theme.subtext)
-                    }
-                    LazyVGrid(columns: columns, spacing: 16) {
-                        ForEach(projects) { summary in
-                            ProjectCard(summary: summary)
-                                .onTapGesture { open(summary.id) }
-                                .contextMenu { menu(summary) }
-                        }
-                    }
-                }
-                .padding(20)
+                projectList
+                    .padding(20)
             }
             .background(Theme.background.ignoresSafeArea())
             .navigationTitle("Distro VE")
-            .toolbar {
-                ToolbarItemGroup(placement: .primaryAction) {
-                    Button { showHelp = true } label: { Image(systemName: "questionmark.circle") }
-                        .accessibilityLabel("ヘルプ")
-                    Button { showSettings = true } label: { Image(systemName: "gearshape") }
-                        .accessibilityLabel("設定")
-                }
-            }
+            .toolbar { toolbarItems }
         }
         .onAppear { reload() }
-        .sheet(isPresented: $showNew) {
-            NewProjectSheet { project in
-                showNew = false
-                save(project)
-                onOpen(project)
+    }
+
+    private var projectList: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            if let id = interrupted, let summary = projects.first(where: { $0.id == id }) {
+                recoveryBanner(summary)
             }
-        }
-        .sheet(isPresented: $showTemplates) {
-            TemplateGallery { project in
-                showTemplates = false
-                save(project)
-                onOpen(project)
+            HStack(spacing: 12) {
+                bigButton("新規プロジェクト", "plus", primary: true) { showNew = true }
+                bigButton("テンプレート", "square.grid.2x2") { showTemplates = true }
+                bigButton(".disve を開く", "folder") { showImport = true }
             }
-        }
-        .sheet(isPresented: $showSettings, onDismiss: reload) {
-            SettingsView()
-        }
-        .sheet(isPresented: $showHelp) {
-            HelpView()
-        }
-        .sheet(item: $backupTarget) { summary in
-            BackupList(summary: summary) { project in
-                backupTarget = nil
-                reload()
-                onOpen(project)
+            Text("プロジェクト").font(.title3.weight(.bold)).foregroundStyle(Theme.text)
+            if projects.isEmpty {
+                Text("まだプロジェクトがありません。「新規プロジェクト」か「テンプレート」から始めましょう。")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.subtext)
             }
-        }
-        .fileImporter(isPresented: $showImport, allowedContentTypes: [.item], allowsMultipleSelection: false) { result in
-            if case .success(let urls) = result, let url = urls.first {
-                do {
-                    let project: Project = try ProjectStore.shared.importProject(from: url)
-                    reload()
-                    onOpen(project)
-                } catch {
-                    errorMessage = error.localizedDescription
+            LazyVGrid(columns: columns, spacing: 16) {
+                ForEach(projects) { summary in
+                    ProjectCard(summary: summary)
+                        .onTapGesture { open(summary.id) }
+                        .contextMenu { menu(summary) }
                 }
             }
         }
-        .alert("開けませんでした", isPresented: Binding<Bool>(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
-            Button("OK") { errorMessage = nil }
-        } message: {
-            Text(errorMessage ?? "")
+    }
+
+    @ToolbarContentBuilder
+    private var toolbarItems: some ToolbarContent {
+        ToolbarItemGroup(placement: .primaryAction) {
+            Button { showHelp = true } label: { Image(systemName: "questionmark.circle") }
+                .accessibilityLabel("ヘルプ")
+            Button { showSettings = true } label: { Image(systemName: "gearshape") }
+                .accessibilityLabel("設定")
         }
-        .alert("名前の変更", isPresented: Binding<Bool>(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })) {
-            TextField("名前", text: $renameText)
-            Button("変更") { rename() }
-            Button("キャンセル", role: .cancel) { renameTarget = nil }
+    }
+
+    private func withSheets<V: View>(_ view: V) -> some View {
+        view
+            .sheet(isPresented: $showNew) {
+                NewProjectSheet { project in
+                    showNew = false
+                    save(project)
+                    onOpen(project)
+                }
+            }
+            .sheet(isPresented: $showTemplates) {
+                TemplateGallery { project in
+                    showTemplates = false
+                    save(project)
+                    onOpen(project)
+                }
+            }
+            .sheet(isPresented: $showSettings, onDismiss: reload) {
+                SettingsView()
+            }
+            .sheet(isPresented: $showHelp) {
+                HelpView()
+            }
+            .sheet(item: $backupTarget) { summary in
+                BackupList(summary: summary) { project in
+                    backupTarget = nil
+                    reload()
+                    onOpen(project)
+                }
+            }
+    }
+
+    private func withDialogs<V: View>(_ view: V) -> some View {
+        view
+            .fileImporter(isPresented: $showImport, allowedContentTypes: [.item], allowsMultipleSelection: false) { result in
+                importProject(result)
+            }
+            .alert("開けませんでした", isPresented: Binding<Bool>(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+                Button("OK") { errorMessage = nil }
+            } message: {
+                Text(errorMessage ?? "")
+            }
+            .alert("名前の変更", isPresented: Binding<Bool>(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })) {
+                TextField("名前", text: $renameText)
+                Button("変更") { rename() }
+                Button("キャンセル", role: .cancel) { renameTarget = nil }
+            }
+    }
+
+    private func importProject(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result, let url = urls.first else { return }
+        do {
+            let project: Project = try ProjectStore.shared.importProject(from: url)
+            reload()
+            onOpen(project)
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 

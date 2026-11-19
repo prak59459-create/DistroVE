@@ -253,6 +253,7 @@ final class ProjectStore: @unchecked Sendable {
                 if let p = asset.relativePath { used.insert(p) }
                 if let p = asset.proxyPath { used.insert(p) }
                 if let p = asset.reversedPath { used.insert(p) }
+                if let p = asset.interpolated?.path { used.insert(p) }
             }
             for track in project.tracks {
                 for clip in track.clips {

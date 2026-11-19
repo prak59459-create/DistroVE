@@ -170,16 +170,19 @@ struct SpeedSettings: Hashable, Codable, Sendable {
     var reversed: Bool
     /// 速度を変えても声の高さを保つ
     var preservePitch: Bool
+    /// スローのとき、オプティカルフローで作ったコマの間を使う（Q99）
+    var smooth: Bool
 
     init(rate: Double = 1) {
         self.rate = rate
         self.curve = []
         self.reversed = false
         self.preservePitch = true
+        self.smooth = false
     }
 
     private enum CodingKeys: String, CodingKey {
-        case rate, curve, reversed, preservePitch
+        case rate, curve, reversed, preservePitch, smooth
     }
 
     init(from decoder: Decoder) throws {
@@ -188,6 +191,25 @@ struct SpeedSettings: Hashable, Codable, Sendable {
         curve = c.value(.curve, [SpeedPoint]())
         reversed = c.value(.reversed, false)
         preservePitch = c.value(.preservePitch, true)
+        smooth = c.value(.smooth, false)
+    }
+
+    /// いちばん遅いところの倍率（なめらかスローでどれだけコマを足すかの目安）。
+    var slowestRate: Double {
+        if !hasCurve { return rate }
+        var slowest: Double = rate
+        for point in curve {
+            slowest = min(slowest, point.rate)
+        }
+        return slowest
+    }
+
+    /// なめらかスローで足すコマの倍数（2・4・8）。
+    var suggestedInterpolationFactor: Int {
+        let slowest: Double = max(0.01, slowestRate)
+        if slowest >= 0.75 { return 2 }
+        if slowest >= 0.35 { return 4 }
+        return 8
     }
 
     var hasCurve: Bool { return curve.count >= 2 }
@@ -339,6 +361,7 @@ struct Clip: Identifiable, Codable, Sendable {
             result.append(String(format: "%.2gx", speed.rate))
         }
         if speed.reversed { result.append("逆") }
+        if speed.smooth { result.append("なめらか") }
         if !effects.isEmpty { result.append("FX\(effects.count)") }
         if look != nil || !color.values.isEmpty { result.append("色") }
         if transform.isAnimated || color.isAnimated { result.append("◆") }

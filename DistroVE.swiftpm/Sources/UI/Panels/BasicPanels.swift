@@ -15,87 +15,115 @@ struct MediaPanel: View {
     @StateObject private var screen = ScreenRecorderModel()
 
     var body: some View {
+        withImporters(sections)
+    }
+
+    private var sections: some View {
         VStack(alignment: .leading, spacing: 14) {
             Toggle("重ねて追加（ピクチャーインピクチャー）", isOn: $asOverlay)
                 .font(.footnote)
-            HStack(spacing: 10) {
-                PhotosPicker(selection: $photoItems, maxSelectionCount: 50, matching: .any(of: [.videos, .images])) {
-                    Label("写真ライブラリ", systemImage: "photo.on.rectangle")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                Button {
-                    showFiles = true
-                } label: {
-                    Label("ファイル・クラウド", systemImage: "folder")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-            }
+            importButtons
             Text(settings.copyMediaOnImport ? "ファイルはアプリ内にコピーして取り込みます（設定で「参照のみ」に変えられます）。" : "ファイルは元の場所を参照します（容量を使いません）。")
                 .font(.caption)
                 .foregroundStyle(Theme.subtext)
             PanelTitle(text: "撮影・録音・録画")
-            HStack(spacing: 10) {
-                Button { showCamera = true } label: { Label("カメラで撮影", systemImage: "video") }
-                Button { showNarration = true } label: { Label("ナレーション", systemImage: "mic") }
-                Button {
-                    screen.toggle { url in
-                        controller.importFiles([url], copy: true, asOverlay: false, autoProxy: false)
-                    }
-                } label: {
-                    Label(screen.isRecording ? "画面録画を止める" : "画面録画", systemImage: screen.isRecording ? "stop.circle" : "record.circle")
-                }
-            }
-            .buttonStyle(.bordered)
+            recordButtons
             PanelTitle(text: "単色・調整")
-            HStack(spacing: 10) {
-                ForEach(["#000000", "#FFFFFF", "#FF7A1A", "#3D7BFF", "#22B566", "#FF4F87"], id: \.self) { hex in
-                    Button {
-                        controller.addSolid(RGBA(hex: hex) ?? .black)
-                    } label: {
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill((RGBA(hex: hex) ?? .black).color)
-                            .frame(width: 36, height: 28)
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.line))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("単色 \(hex)")
-                }
-                Button("調整レイヤー") { controller.addAdjustmentLayer() }
-                    .buttonStyle(.bordered)
-            }
+            solidButtons
             if !controller.project.media.isEmpty {
                 PanelTitle(text: "このプロジェクトの素材")
                 ProjectMediaList(controller: controller)
             }
         }
-        .onChange(of: photoItems) { _, items in
-            if items.isEmpty { return }
-            controller.importPhotos(items, asOverlay: asOverlay, autoProxy: settings.autoProxy)
-            photoItems = []
-        }
-        .fileImporter(isPresented: $showFiles, allowedContentTypes: [.movie, .audio, .image, .gif, .item], allowsMultipleSelection: true) { result in
-            if case .success(let urls) = result {
-                controller.importFiles(urls, copy: settings.copyMediaOnImport, asOverlay: asOverlay, autoProxy: settings.autoProxy)
+    }
+
+    private var importButtons: some View {
+        HStack(spacing: 10) {
+            PhotosPicker(selection: $photoItems, maxSelectionCount: 50, matching: .any(of: [.videos, .images])) {
+                Label("写真ライブラリ", systemImage: "photo.on.rectangle")
+                    .frame(maxWidth: .infinity)
             }
-        }
-        .fullScreenCover(isPresented: $showCamera) {
-            CameraRecorderView { url in
-                showCamera = false
-                if let url = url {
-                    controller.importFiles([url], copy: true, asOverlay: asOverlay, autoProxy: settings.autoProxy)
-                }
+            .buttonStyle(.borderedProminent)
+            Button {
+                showFiles = true
+            } label: {
+                Label("ファイル・クラウド", systemImage: "folder")
+                    .frame(maxWidth: .infinity)
             }
+            .buttonStyle(.bordered)
         }
-        .sheet(isPresented: $showNarration) {
-            NarrationRecorderView { url in
-                showNarration = false
-                if let url = url {
+    }
+
+    private var recordButtons: some View {
+        HStack(spacing: 10) {
+            Button { showCamera = true } label: { Label("カメラで撮影", systemImage: "video") }
+            Button { showNarration = true } label: { Label("ナレーション", systemImage: "mic") }
+            Button {
+                screen.toggle { url in
                     controller.importFiles([url], copy: true, asOverlay: false, autoProxy: false)
                 }
+            } label: {
+                Label(screen.isRecording ? "画面録画を止める" : "画面録画", systemImage: screen.isRecording ? "stop.circle" : "record.circle")
             }
         }
+        .buttonStyle(.bordered)
+    }
+
+    private var solidButtons: some View {
+        HStack(spacing: 10) {
+            ForEach(["#000000", "#FFFFFF", "#FF7A1A", "#3D7BFF", "#22B566", "#FF4F87"], id: \.self) { hex in
+                SolidSwatch(hex: hex) { controller.addSolid(RGBA(hex: hex) ?? .black) }
+            }
+            Button("調整レイヤー") { controller.addAdjustmentLayer() }
+                .buttonStyle(.bordered)
+        }
+    }
+
+    private func withImporters<V: View>(_ view: V) -> some View {
+        view
+            .onChange(of: photoItems) { _, items in
+                if items.isEmpty { return }
+                controller.importPhotos(items, asOverlay: asOverlay, autoProxy: settings.autoProxy)
+                photoItems = []
+            }
+            .fileImporter(isPresented: $showFiles, allowedContentTypes: [.movie, .audio, .image, .gif, .item], allowsMultipleSelection: true) { result in
+                if case .success(let urls) = result {
+                    controller.importFiles(urls, copy: settings.copyMediaOnImport, asOverlay: asOverlay, autoProxy: settings.autoProxy)
+                }
+            }
+            .fullScreenCover(isPresented: $showCamera) {
+                CameraRecorderView { url in
+                    showCamera = false
+                    if let url = url {
+                        controller.importFiles([url], copy: true, asOverlay: asOverlay, autoProxy: settings.autoProxy)
+                    }
+                }
+            }
+            .sheet(isPresented: $showNarration) {
+                NarrationRecorderView { url in
+                    showNarration = false
+                    if let url = url {
+                        controller.importFiles([url], copy: true, asOverlay: false, autoProxy: false)
+                    }
+                }
+            }
+    }
+}
+
+/// 単色クリップの見本（押すと追加）。
+struct SolidSwatch: View {
+    let hex: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            RoundedRectangle(cornerRadius: 6)
+                .fill((RGBA(hex: hex) ?? .black).color)
+                .frame(width: 36, height: 28)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.line))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("単色 \(hex)")
     }
 }
 

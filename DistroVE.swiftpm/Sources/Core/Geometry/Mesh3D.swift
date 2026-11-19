@@ -366,25 +366,57 @@ enum Primitives {
         return mesh
     }
 
+    /// 立方体の 1 面（法線と、面に沿った 2 つの向き）。
+    struct CubeFace {
+        let normal: SIMD3<Float>
+        let u: SIMD3<Float>
+        let v: SIMD3<Float>
+    }
+
+    /// SIMD の式は型チェックが重いので、作るところは関数に分ける。
+    static func vec(_ x: Float, _ y: Float, _ z: Float) -> SIMD3<Float> {
+        return SIMD3<Float>(x, y, z)
+    }
+
+    static func uv(_ u: Float, _ v: Float) -> SIMD2<Float> {
+        return SIMD2<Float>(u, v)
+    }
+
+    static var cubeFaces: [CubeFace] {
+        return [
+            CubeFace(normal: vec(0, 0, 1), u: vec(1, 0, 0), v: vec(0, 1, 0)),
+            CubeFace(normal: vec(0, 0, -1), u: vec(-1, 0, 0), v: vec(0, 1, 0)),
+            CubeFace(normal: vec(1, 0, 0), u: vec(0, 0, -1), v: vec(0, 1, 0)),
+            CubeFace(normal: vec(-1, 0, 0), u: vec(0, 0, 1), v: vec(0, 1, 0)),
+            CubeFace(normal: vec(0, 1, 0), u: vec(1, 0, 0), v: vec(0, 0, -1)),
+            CubeFace(normal: vec(0, -1, 0), u: vec(1, 0, 0), v: vec(0, 0, 1))
+        ]
+    }
+
     static func cube() -> MeshData {
         var mesh = MeshData()
-        let faces: [(normal: SIMD3<Float>, u: SIMD3<Float>, v: SIMD3<Float>)] = [
-            (SIMD3<Float>(0, 0, 1), SIMD3<Float>(1, 0, 0), SIMD3<Float>(0, 1, 0)),
-            (SIMD3<Float>(0, 0, -1), SIMD3<Float>(-1, 0, 0), SIMD3<Float>(0, 1, 0)),
-            (SIMD3<Float>(1, 0, 0), SIMD3<Float>(0, 0, -1), SIMD3<Float>(0, 1, 0)),
-            (SIMD3<Float>(-1, 0, 0), SIMD3<Float>(0, 0, 1), SIMD3<Float>(0, 1, 0)),
-            (SIMD3<Float>(0, 1, 0), SIMD3<Float>(1, 0, 0), SIMD3<Float>(0, 0, -1)),
-            (SIMD3<Float>(0, -1, 0), SIMD3<Float>(1, 0, 0), SIMD3<Float>(0, 0, 1))
-        ]
-        for face in faces {
-            let center: SIMD3<Float> = face.normal * 0.5
-            let a: UInt32 = mesh.addVertex(center - face.u * 0.5 - face.v * 0.5, face.normal, SIMD2<Float>(0, 1))
-            let b: UInt32 = mesh.addVertex(center + face.u * 0.5 - face.v * 0.5, face.normal, SIMD2<Float>(1, 1))
-            let c: UInt32 = mesh.addVertex(center + face.u * 0.5 + face.v * 0.5, face.normal, SIMD2<Float>(1, 0))
-            let d: UInt32 = mesh.addVertex(center - face.u * 0.5 + face.v * 0.5, face.normal, SIMD2<Float>(0, 0))
-            mesh.addQuad(a, b, c, d)
+        for face in Primitives.cubeFaces {
+            Primitives.appendFace(&mesh, face)
         }
         return mesh
+    }
+
+    static func appendFace(_ mesh: inout MeshData, _ face: CubeFace) {
+        let half: Float = 0.5
+        let center: SIMD3<Float> = face.normal * half
+        let du: SIMD3<Float> = face.u * half
+        let dv: SIMD3<Float> = face.v * half
+        let low: SIMD3<Float> = center - dv
+        let high: SIMD3<Float> = center + dv
+        let p0: SIMD3<Float> = low - du
+        let p1: SIMD3<Float> = low + du
+        let p2: SIMD3<Float> = high + du
+        let p3: SIMD3<Float> = high - du
+        let a: UInt32 = mesh.addVertex(p0, face.normal, uv(0, 1))
+        let b: UInt32 = mesh.addVertex(p1, face.normal, uv(1, 1))
+        let c: UInt32 = mesh.addVertex(p2, face.normal, uv(1, 0))
+        let d: UInt32 = mesh.addVertex(p3, face.normal, uv(0, 0))
+        mesh.addQuad(a, b, c, d)
     }
 
     static func sphere(segments: Int, rings: Int) -> MeshData {
@@ -395,8 +427,10 @@ enum Primitives {
             for s in 0...segments {
                 let u: Float = Float(s) / Float(segments)
                 let theta: Float = u * 2 * Float.pi
-                let n = SIMD3<Float>(sin(phi) * sin(theta), cos(phi), sin(phi) * cos(theta))
-                _ = mesh.addVertex(n * 0.5, n, SIMD2<Float>(u, v))
+                let ring: Float = sin(phi)
+                let n: SIMD3<Float> = vec(ring * sin(theta), cos(phi), ring * cos(theta))
+                let p: SIMD3<Float> = n * Float(0.5)
+                _ = mesh.addVertex(p, n, uv(u, v))
             }
         }
         let row: Int = segments + 1
@@ -417,10 +451,11 @@ enum Primitives {
         for s in 0...segments {
             let u: Float = Float(s) / Float(segments)
             let theta: Float = u * 2 * Float.pi
-            let dir = SIMD3<Float>(sin(theta), 0, cos(theta))
-            let normal: SIMD3<Float> = Extrusion.normalized(SIMD3<Float>(dir.x, slope, dir.z))
-            _ = mesh.addVertex(SIMD3<Float>(dir.x * radiusTop, 0.5, dir.z * radiusTop), normal, SIMD2<Float>(u, 0))
-            _ = mesh.addVertex(SIMD3<Float>(dir.x * radiusBottom, -0.5, dir.z * radiusBottom), normal, SIMD2<Float>(u, 1))
+            let dx: Float = sin(theta)
+            let dz: Float = cos(theta)
+            let normal: SIMD3<Float> = Extrusion.normalized(vec(dx, slope, dz))
+            _ = mesh.addVertex(vec(dx * radiusTop, 0.5, dz * radiusTop), normal, uv(u, 0))
+            _ = mesh.addVertex(vec(dx * radiusBottom, -0.5, dz * radiusBottom), normal, uv(u, 1))
         }
         for s in 0..<segments {
             let a: UInt32 = UInt32(s * 2)
@@ -432,13 +467,14 @@ enum Primitives {
     }
 
     static func appendDisc(_ mesh: inout MeshData, segments: Int, radius: Float, y: Float, up: Bool) {
-        let normal = SIMD3<Float>(0, up ? 1 : -1, 0)
-        let center: UInt32 = mesh.addVertex(SIMD3<Float>(0, y, 0), normal, SIMD2<Float>(0.5, 0.5))
+        let normal: SIMD3<Float> = vec(0, up ? 1 : -1, 0)
+        let center: UInt32 = mesh.addVertex(vec(0, y, 0), normal, uv(0.5, 0.5))
         let first: UInt32 = UInt32(mesh.positions.count)
         for s in 0...segments {
             let theta: Float = Float(s) / Float(segments) * 2 * Float.pi
-            let p = SIMD3<Float>(sin(theta) * radius, y, cos(theta) * radius)
-            _ = mesh.addVertex(p, normal, SIMD2<Float>(0.5 + sin(theta) * 0.5, 0.5 + cos(theta) * 0.5))
+            let sx: Float = sin(theta)
+            let sz: Float = cos(theta)
+            _ = mesh.addVertex(vec(sx * radius, y, sz * radius), normal, uv(0.5 + sx * 0.5, 0.5 + sz * 0.5))
         }
         for s in 0..<segments {
             let a: UInt32 = first + UInt32(s)
@@ -466,13 +502,16 @@ enum Primitives {
         for s in 0...segments {
             let u: Float = Float(s) / Float(segments)
             let theta: Float = u * 2 * Float.pi
-            let ring = SIMD3<Float>(cos(theta), sin(theta), 0)
+            let cx: Float = cos(theta)
+            let cy: Float = sin(theta)
             for k in 0...sides {
                 let v: Float = Float(k) / Float(sides)
                 let phi: Float = v * 2 * Float.pi
-                let normal: SIMD3<Float> = ring * cos(phi) + SIMD3<Float>(0, 0, sin(phi))
-                let position: SIMD3<Float> = ring * major + normal * minor
-                _ = mesh.addVertex(position, normal, SIMD2<Float>(u, v))
+                let spread: Float = cos(phi)
+                let normal: SIMD3<Float> = vec(cx * spread, cy * spread, sin(phi))
+                let reach: Float = major + minor * spread
+                let position: SIMD3<Float> = vec(cx * reach, cy * reach, minor * sin(phi))
+                _ = mesh.addVertex(position, normal, uv(u, v))
             }
         }
         let row: Int = sides + 1

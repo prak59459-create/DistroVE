@@ -105,6 +105,33 @@ extension EditorController {
         }
     }
 
+    /// なめらかスロー（Q99）。コマの足りないときは、使う範囲だけをオプティカルフローで作ってから使う。
+    func setSmoothSlowMotion(_ on: Bool) {
+        guard let clip = selectedClip, clip.kind == .video, let asset = project.asset(clip.mediaID) else { return }
+        if !on {
+            updateSelected("なめらかスローを解除") { $0.speed.smooth = false }
+            return
+        }
+        let factor: Int = clip.speed.suggestedInterpolationFactor
+        let source = TimeRange(start: clip.sourceStart, duration: clip.sourceDuration)
+        if let made = asset.interpolated, made.covers(source, factor: factor) {
+            updateSelected("なめらかスロー") { $0.speed.smooth = true }
+            return
+        }
+        let margin: Time = Time(seconds: 0.5)
+        let start: Time = max(.zero, source.start - margin)
+        let limit: Time = asset.duration.isPositive ? asset.duration : source.end + margin
+        let range = TimeRange(start: start, end: min(limit, source.end + margin))
+        let id: UUID = clip.id
+        runJob("なめらかスローの準備") { controller, progress in
+            let made: InterpolatedMedia = try await MediaJobs.makeInterpolated(for: asset, range: range, factor: factor, progress: progress)
+            controller.apply("なめらかスロー") { p in
+                if let index = p.media.firstIndex(where: { $0.id == asset.id }) { p.media[index].interpolated = made }
+                p.updateClip(id) { $0.speed.smooth = true }
+            }
+        }
+    }
+
     func freezeFrame(seconds: Double = 2) {
         guard let clip = selectedClip ?? clipUnderPlayhead(), clip.kind == .video, let asset = project.asset(clip.mediaID) else {
             showToast("動画のクリップを選んでください")

@@ -72,6 +72,18 @@ final class AppSettings: ObservableObject {
     @Published var snapping: Bool { didSet { store(snapping, "snapping") } }
     /// キーボードショートカットの割り当て（Q70）。動作 → キー（1 文字）
     @Published var shortcuts: [String: String] { didSet { saveShortcuts() } }
+    /// 編集の経験に合わせた見せ方（Q15）
+    @Published var editorLevel: EditorLevel { didSet { store(editorLevel.rawValue, "editorLevel") } }
+    /// 端末の性能（Q81）。nil なら自動
+    @Published var deviceTier: DeviceTier? {
+        didSet {
+            store(deviceTier?.rawValue ?? "", "deviceTier")
+            DevicePerformance.setOverride(deviceTier)
+        }
+    }
+    /// ツールバーの道具の並びと、隠した道具（Q70）
+    @Published var rootToolOrder: [String] { didSet { store(rootToolOrder, "rootToolOrder") } }
+    @Published var hiddenRootTools: [String] { didSet { store(hiddenRootTools, "hiddenRootTools") } }
 
     init() {
         let d = UserDefaults.standard
@@ -90,6 +102,17 @@ final class AppSettings: ObservableObject {
         } else {
             shortcuts = ShortcutAction.defaults
         }
+        editorLevel = EditorLevel(rawValue: d.string(forKey: "editorLevel") ?? "") ?? .standard
+        let tier: DeviceTier? = DeviceTier(rawValue: d.string(forKey: "deviceTier") ?? "")
+        deviceTier = tier
+        rootToolOrder = d.stringArray(forKey: "rootToolOrder") ?? RootTool.allCases.map { $0.rawValue }
+        hiddenRootTools = d.stringArray(forKey: "hiddenRootTools") ?? []
+        DevicePerformance.setOverride(tier)
+    }
+
+    /// ツールバーに出す道具（並び・隠したもの・経験の段階を反映）。
+    var visibleRootTools: [RootTool] {
+        return RootTool.visible(order: rootToolOrder, hidden: Set(hiddenRootTools), level: editorLevel)
     }
 
     var colorScheme: ColorScheme? {

@@ -72,6 +72,11 @@ enum PreviewQuality: String, CaseIterable, Identifiable {
 
     var id: String { return rawValue }
 
+    /// 端末の性能（Q81）に合わせた最初の画質。
+    static var forDevice: PreviewQuality {
+        return DevicePerformance.current.profile.previewScale < 0.75 ? .half : .full
+    }
+
     var scale: Double {
         switch self {
         case .full: return 1
@@ -111,7 +116,7 @@ final class EditorController: ObservableObject {
     @Published var panel: EditorPanel?
     @Published private(set) var isPlaying: Bool = false
     @Published var loop: Bool = false
-    @Published var quality: PreviewQuality = .full {
+    @Published var quality: PreviewQuality = PreviewQuality.forDevice {
         didSet { requestRebuild() }
     }
     @Published var useProxies: Bool = false {
@@ -537,7 +542,7 @@ final class EditorController: ObservableObject {
 
     /// 重い素材（4K・HEVC 高フレームレート）はプロキシを作る。
     func makeProxyIfNeeded(_ asset: MediaAsset, auto: Bool) {
-        if asset.proxyPath != nil || !asset.recommendsProxy || !auto { return }
+        if asset.proxyPath != nil || !asset.recommendsProxy(on: DevicePerformance.current) || !auto { return }
         let id: UUID = asset.id
         let item: MediaAsset = asset
         Task.detached(priority: .utility) { [weak self] in
@@ -597,7 +602,7 @@ struct TimingKey: Equatable {
         tracks = trackKeys
         var mediaKeys: [String] = []
         for asset in project.media {
-            mediaKeys.append(asset.id.uuidString + (asset.proxyPath ?? "") + (asset.reversedPath ?? ""))
+            mediaKeys.append(asset.id.uuidString + (asset.proxyPath ?? "") + (asset.reversedPath ?? "") + (asset.interpolated?.path ?? ""))
         }
         media = mediaKeys
         self.scale = scale

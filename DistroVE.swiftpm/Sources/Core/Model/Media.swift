@@ -20,6 +20,21 @@ enum MediaStorage: String, Codable, Sendable {
     case generated
 }
 
+/// オプティカルフローでコマの間を足した動画（Q99）。素材の range の部分だけを factor 倍のコマ数にしたもの。
+struct InterpolatedMedia: Hashable, Codable, Sendable {
+    /// Media フォルダーからの相対パス
+    var path: String
+    var factor: Int
+    /// 元の素材の中の範囲（ファイルの 0 秒が range.start に当たる）
+    var range: TimeRange
+
+    /// 素材の source の範囲をすべて含み、コマ数も足りているか。
+    func covers(_ source: TimeRange, factor wanted: Int) -> Bool {
+        let tolerance: Time = Time(seconds: 0.02)
+        return factor >= wanted && source.start + tolerance >= range.start && source.end <= range.end + tolerance
+    }
+}
+
 /// プロジェクトに取り込んだ素材。
 struct MediaAsset: Identifiable, Hashable, Codable, Sendable {
     var id: UUID
@@ -44,6 +59,7 @@ struct MediaAsset: Identifiable, Hashable, Codable, Sendable {
     var proxyPath: String?
     /// 逆再生用に作った動画の相対パス
     var reversedPath: String?
+    var interpolated: InterpolatedMedia?
     var importedAt: Date
     /// 内蔵素材の識別子（内蔵 BGM など）
     var libraryID: String?
@@ -65,6 +81,7 @@ struct MediaAsset: Identifiable, Hashable, Codable, Sendable {
         self.fileSize = 0
         self.proxyPath = nil
         self.reversedPath = nil
+        self.interpolated = nil
         self.importedAt = Date()
         self.libraryID = nil
     }
@@ -85,8 +102,14 @@ struct MediaAsset: Identifiable, Hashable, Codable, Sendable {
 
     /// 4K 超や HEVC 10bit など重い素材はプロキシ作成をすすめる。
     var recommendsProxy: Bool {
+        return recommendsProxy(on: .standard)
+    }
+
+    /// 端末の性能（Q81）に合わせて、プロキシを作るかどうか。
+    func recommendsProxy(on tier: DeviceTier) -> Bool {
         if kind != .video { return false }
-        return max(width, height) > 2000 || frameRate > 61
+        let profile: DeviceProfile = tier.profile
+        return max(width, height) > profile.proxyAboveLongSide || frameRate > profile.proxyAboveFrameRate
     }
 }
 

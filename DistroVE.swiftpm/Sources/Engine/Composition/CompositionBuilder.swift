@@ -113,7 +113,9 @@ final class CompositionBuilder: @unchecked Sendable {
             for (position, clip) in track.clips.enumerated() where clip.kind == .video {
                 guard let asset = project.asset(clip.mediaID) else { continue }
                 let reversedURL: URL? = clip.speed.reversed ? media.url(for: asset, variant: .reversed) : nil
-                let url: URL? = reversedURL ?? media.url(for: asset, variant: options.useProxies ? .proxy : .original)
+                let smooth: InterpolatedMedia? = reversedURL == nil ? CompositionBuilder.smoothSource(clip, asset) : nil
+                let smoothURL: URL? = smooth != nil ? media.url(for: asset, variant: .interpolated) : nil
+                let url: URL? = reversedURL ?? smoothURL ?? media.url(for: asset, variant: options.useProxies ? .proxy : .original)
                 guard let fileURL = url, let loaded = try? await load(fileURL), let sourceTrack = loaded.video else { continue }
                 var lead: Time = .zero
                 var trail: Time = .zero
@@ -145,6 +147,9 @@ final class CompositionBuilder: @unchecked Sendable {
                 var base: Time = clip.sourceStart
                 if reversed {
                     base = max(.zero, mediaDuration - clip.sourceStart - clip.sourceDuration)
+                } else if smoothURL != nil, let made = smooth {
+                    // コマを足したファイルの 0 秒は素材の made.range.start
+                    base = max(.zero, clip.sourceStart - made.range.start)
                 }
                 let mediaFrame: Time = Time.frameDuration(fps: loaded.frameRate)
                 let map = SpeedMap(settings: clip.speed)
@@ -181,6 +186,13 @@ final class CompositionBuilder: @unchecked Sendable {
         videoComposition.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
         videoComposition.instructions = instructions(windows: windows, total: total, compositionDuration: composition.duration, graph: graph)
         return Result(composition: composition, videoComposition: videoComposition, audioMix: audioMix, graph: graph, duration: total)
+    }
+
+    /// なめらかスロー（Q99）で使える、コマを足したファイル。クリップの範囲をすべて含むときだけ使う。
+    static func smoothSource(_ clip: Clip, _ asset: MediaAsset) -> InterpolatedMedia? {
+        guard clip.speed.smooth, let made = asset.interpolated else { return nil }
+        let source = TimeRange(start: clip.sourceStart, duration: clip.sourceDuration)
+        return made.covers(source, factor: 1) ? made : nil
     }
 
     /// クリップ本体を一定速度の区間ごとに入れる。

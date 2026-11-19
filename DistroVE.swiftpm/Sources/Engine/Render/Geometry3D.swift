@@ -101,10 +101,10 @@ enum Geometry3D {
                 let c: SIMD2<Double> = Geometry3D.vector(element.points[0])
                 let p: SIMD2<Double> = Geometry3D.vector(element.points[1])
                 let n: Int = Geometry3D.segments(Extrusion.distance(last, c) + Extrusion.distance(c, p))
+                let start: SIMD2<Double> = last
                 for k in 1...n {
                     let t: Double = Double(k) / Double(n)
-                    let u: Double = 1 - t
-                    current.append(last * (u * u) + c * (2 * u * t) + p * (t * t))
+                    current.append(Geometry3D.quadratic(start, c, p, t))
                 }
                 last = p
             case .addCurveToPoint:
@@ -138,13 +138,26 @@ enum Geometry3D {
         return max(4, min(24, Int(length * 48)))
     }
 
+    /// 2 次の曲線。成分ごとに計算する（SIMD の式は型チェックが重いため）。
+    static func quadratic(_ a: SIMD2<Double>, _ b: SIMD2<Double>, _ c: SIMD2<Double>, _ t: Double) -> SIMD2<Double> {
+        let u: Double = 1 - t
+        let w0: Double = u * u
+        let w1: Double = 2 * u * t
+        let w2: Double = t * t
+        let x: Double = a.x * w0 + b.x * w1 + c.x * w2
+        let y: Double = a.y * w0 + b.y * w1 + c.y * w2
+        return SIMD2<Double>(x, y)
+    }
+
     static func cubic(_ a: SIMD2<Double>, _ b: SIMD2<Double>, _ c: SIMD2<Double>, _ d: SIMD2<Double>, _ t: Double) -> SIMD2<Double> {
         let u: Double = 1 - t
         let w0: Double = u * u * u
         let w1: Double = 3 * u * u * t
         let w2: Double = 3 * u * t * t
         let w3: Double = t * t * t
-        return a * w0 + b * w1 + c * w2 + d * w3
+        let x: Double = a.x * w0 + b.x * w1 + c.x * w2 + d.x * w3
+        let y: Double = a.y * w0 + b.y * w1 + c.y * w2 + d.y * w3
+        return SIMD2<Double>(x, y)
     }
 
     // MARK: モデル

@@ -17,6 +17,7 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 displaySection
+                editingSection
                 mediaSection
                 Section("キーボードショートカット") {
                     NavigationLink("割り当てを変える") { ShortcutEditor() }
@@ -55,6 +56,22 @@ struct SettingsView: View {
             }
             Toggle("ツールバーを上に置く", isOn: $settings.toolbarAtTop)
             Toggle("スナップ（吸着）", isOn: $settings.snapping)
+        }
+    }
+
+    /// 編集の経験（Q15）・端末の性能（Q81）・ツールバー（Q70）。
+    private var editingSection: some View {
+        Section("編集の経験・端末の性能") {
+            Picker("編集の経験", selection: $settings.editorLevel) {
+                ForEach(EditorLevel.allCases, id: \.self) { level in Text(level.label).tag(level) }
+            }
+            Text(settings.editorLevel.detail).font(.caption).foregroundStyle(Theme.subtext)
+            Picker("端末の性能", selection: $settings.deviceTier) {
+                Text("自動（この端末は「" + DevicePerformance.detected.label + "」）").tag(DeviceTier?.none)
+                ForEach(DeviceTier.allCases, id: \.self) { tier in Text(tier.label).tag(DeviceTier?.some(tier)) }
+            }
+            Text(DevicePerformance.current.detail).font(.caption).foregroundStyle(Theme.subtext)
+            NavigationLink("ツールバーの道具の並び・表示") { ToolbarEditor() }
         }
     }
 
@@ -268,8 +285,47 @@ struct PrivacyPolicyView: View {
 }
 
 /// 初回のチュートリアル（Q65）。
+/// ツールバーの道具の並べ替えと表示の切り替え（Q70）。
+struct ToolbarEditor: View {
+    @EnvironmentObject private var settings: AppSettings
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(RootTool.ordered(settings.rootToolOrder)) { tool in
+                    Toggle(isOn: binding(for: tool)) { Label(tool.title, systemImage: tool.symbol) }
+                }
+                .onMove { from, to in move(from, to) }
+            } footer: {
+                Text("右のつまみで並べ替えます。オフにした道具はツールバーに出ません。「かんたん」では一部の道具を自動で隠します。")
+            }
+            Button("最初の並びに戻す") {
+                settings.rootToolOrder = RootTool.allCases.map { $0.rawValue }
+                settings.hiddenRootTools = []
+            }
+        }
+        .environment(\.editMode, .constant(.active))
+        .navigationTitle("ツールバー")
+    }
+
+    private func binding(for tool: RootTool) -> Binding<Bool> {
+        return Binding<Bool>(get: { !settings.hiddenRootTools.contains(tool.rawValue) }, set: { on in
+            var hidden: [String] = settings.hiddenRootTools.filter { $0 != tool.rawValue }
+            if !on { hidden.append(tool.rawValue) }
+            settings.hiddenRootTools = hidden
+        })
+    }
+
+    private func move(_ from: IndexSet, _ to: Int) {
+        var order: [String] = RootTool.ordered(settings.rootToolOrder).map { $0.rawValue }
+        order.move(fromOffsets: from, toOffset: to)
+        settings.rootToolOrder = order
+    }
+}
+
 struct TutorialView: View {
     let onDone: () -> Void
+    @EnvironmentObject private var settings: AppSettings
     @State private var page: Int = 0
 
     private let pages: [(String, String, String)] = [
@@ -280,6 +336,22 @@ struct TutorialView: View {
         ("wand.and.stars", "AI と自動編集", "自動字幕・無音カット・BGM に合わせた自動編集・ショート変換・背景除去が端末内で使えます。"),
         ("square.and.arrow.up", "書き出し", "YouTube・TikTok・Instagram のプリセットで、透かしなしの MP4 や GIF を保存できます。")
     ]
+
+    /// 編集の経験（Q15）。初心者からプロまで、出す道具の数を変える。
+    private var levelChooser: some View {
+        VStack(spacing: 6) {
+            Picker("編集の経験", selection: $settings.editorLevel) {
+                ForEach(EditorLevel.allCases, id: \.self) { level in Text(level.label).tag(level) }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 420)
+            Text(settings.editorLevel.detail + "（あとで設定から変えられます）")
+                .font(.footnote)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(Theme.subtext)
+                .frame(maxWidth: 520)
+        }
+    }
 
     var body: some View {
         VStack(spacing: 24) {
@@ -301,6 +373,7 @@ struct TutorialView: View {
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .always))
+            levelChooser
             HStack {
                 Button("スキップ") { onDone() }
                 Spacer()

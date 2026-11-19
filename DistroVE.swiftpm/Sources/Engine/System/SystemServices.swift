@@ -7,6 +7,27 @@ import Metal
 import MetricKit
 #endif
 
+/// 端末の性能の段階（Q81）。メモリ・CPU の数・GPU の世代から自動で決め、設定で変えることもできる。
+enum DevicePerformance {
+    private static let override = Locked<DeviceTier?>(nil)
+    static let detected: DeviceTier = DevicePerformance.detect()
+
+    static var current: DeviceTier {
+        return override.get() ?? detected
+    }
+
+    static func setOverride(_ tier: DeviceTier?) {
+        override.set(tier)
+    }
+
+    static func detect() -> DeviceTier {
+        let info = ProcessInfo.processInfo
+        let memory: Double = Double(info.physicalMemory) / 1_073_741_824
+        let modern: Bool = MTLCreateSystemDefaultDevice()?.supportsFamily(.apple7) ?? false
+        return DeviceTier.classify(memoryGB: memory, cores: info.activeProcessorCount, modernGPU: modern)
+    }
+}
+
 /// 端末の性能から、書き出しで選べる上限を決める（4K・120fps は対応端末のみ）。
 enum DeviceCapability {
     static func limits() -> DeviceLimits {

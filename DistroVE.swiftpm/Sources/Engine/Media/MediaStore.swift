@@ -12,6 +12,8 @@ final class MediaStore: @unchecked Sendable {
         case original
         case proxy
         case reversed
+        /// オプティカルフローでコマを足したもの（Q99）
+        case interpolated
     }
 
     private let openScopes = Locked<[UUID: URL]>([:])
@@ -29,6 +31,12 @@ final class MediaStore: @unchecked Sendable {
             }
         case .reversed:
             if let path = asset.reversedPath {
+                let url: URL = AppPaths.media.appendingPathComponent(path)
+                if FileManager.default.fileExists(atPath: url.path) { return url }
+            }
+            return nil
+        case .interpolated:
+            if let path = asset.interpolated?.path {
                 let url: URL = AppPaths.media.appendingPathComponent(path)
                 if FileManager.default.fileExists(atPath: url.path) { return url }
             }
@@ -253,6 +261,9 @@ final class MediaStore: @unchecked Sendable {
         }
         if let reversed = asset.reversedPath {
             try? FileManager.default.removeItem(at: AppPaths.media.appendingPathComponent(reversed))
+        }
+        if let smooth = asset.interpolated?.path {
+            try? FileManager.default.removeItem(at: AppPaths.media.appendingPathComponent(smooth))
         }
     }
 }

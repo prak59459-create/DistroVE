@@ -46,6 +46,24 @@ enum MediaJobs {
         return output
     }
 
+    /// なめらかスロー用（Q99）。素材の range の部分を、オプティカルフローで factor 倍のコマ数にする。
+    static func makeInterpolated(for asset: MediaAsset, range: TimeRange, factor: Int,
+                                 progress: (@Sendable (Double) -> Void)? = nil) async throws -> InterpolatedMedia {
+        guard let url = MediaStore.shared.url(for: asset) else { throw EngineError.missingMedia(asset.name) }
+        #if canImport(Vision)
+        guard let interpolator = FrameInterpolator.shared else { throw EngineError.unsupported("この端末ではなめらかスローを作れません") }
+        let folder: URL = AppPaths.media.appendingPathComponent("Interpolated", isDirectory: true)
+        AppPaths.ensure(folder)
+        let name: String = asset.id.uuidString + "-\(factor)x.mov"
+        let output: URL = folder.appendingPathComponent(name)
+        try await interpolator.interpolate(url: url, range: range, factor: factor, accuracy: DevicePerformance.current.flowAccuracy,
+                                           output: output, progress: progress)
+        return InterpolatedMedia(path: "Interpolated/" + name, factor: factor, range: range)
+        #else
+        throw EngineError.unsupported("この端末ではなめらかスローを作れません")
+        #endif
+    }
+
     /// 逆再生用の動画を作る（Q34）。メモリを抑えるため、後ろから短い区間ずつ読んで逆順に書く。音声は含めない。
     static func makeReversed(for asset: MediaAsset, progress: (@Sendable (Double) -> Void)? = nil) async throws -> String {
         guard let url = MediaStore.shared.url(for: asset) else { throw EngineError.missingMedia(asset.name) }

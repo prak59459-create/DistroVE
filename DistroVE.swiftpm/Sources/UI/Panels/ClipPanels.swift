@@ -29,6 +29,30 @@ struct ClipParamRow: View {
     }
 }
 
+/// なめらかスロー（Q99）。オプティカルフローでコマの間を作る。
+struct SmoothSlowMotionRow: View {
+    @ObservedObject var controller: EditorController
+    let clip: Clip
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle("なめらかスロー（オプティカルフロー）", isOn: Binding<Bool>(get: { clip.speed.smooth },
+                                                              set: { v in controller.setSmoothSlowMotion(v) }))
+                .font(.footnote)
+            Text(detail)
+                .font(.caption2)
+                .foregroundStyle(Theme.subtext)
+        }
+    }
+
+    private var detail: String {
+        if clip.speed.smooth, let asset = controller.project.asset(clip.mediaID), let made = asset.interpolated {
+            return "コマを \(made.factor) 倍に増やしています（端末内で作成）"
+        }
+        return "スローにしたとき、前後のコマから動きを読んで間のコマを作ります。作るのに時間がかかります。"
+    }
+}
+
 /// 変形（Q35）と 3D（Q50）。
 struct TransformPanel: View {
     @ObservedObject var controller: EditorController
@@ -140,6 +164,7 @@ struct SpeedPanel: View {
                                                      set: { v in controller.updateSelected("声の高さ") { $0.speed.preservePitch = v } }))
                     .font(.footnote)
                 if clip.kind == .video {
+                    SmoothSlowMotionRow(controller: controller, clip: clip)
                     HStack {
                         Button(clip.speed.reversed ? "逆再生を解除" : "逆再生") { controller.toggleReverse() }
                         Button("静止（2 秒）") { controller.freezeFrame() }
