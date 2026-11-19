@@ -367,75 +367,105 @@ final class TimelineCanvasView: UIView, UIGestureRecognizerDelegate {
         ctx.clip()
         ctx.setFillColor(base.withAlphaComponent(0.85).cgColor)
         ctx.fill(frame)
-        // コマ（フィルムストリップ）
-        if clip.kind == .video || clip.kind == .image || clip.kind == .gif, let asset = project.asset(clip.mediaID),
-           let strip = ThumbnailStore.shared.strip(asset.id), let first = strip.images.first {
-            let tileHeight: CGFloat = frame.height - 2
-            let imageWidth: CGFloat = CGFloat(first.width)
-            let imageHeight: CGFloat = CGFloat(max(1, first.height))
-            let aspect: CGFloat = imageWidth / imageHeight
-            let tileWidth: CGFloat = max(16, tileHeight * aspect)
-            let offset: CGFloat = visible.minX - frame.minX
-            let phase: CGFloat = offset.truncatingRemainder(dividingBy: tileWidth)
-            var tx: CGFloat = max(frame.minX, visible.minX - phase)
-            let map = SpeedMap(settings: clip.speed)
-            while tx < visible.maxX {
-                let distance: CGFloat = tx - frame.minX
-                let localSeconds: Double = Double(distance / pointsPerSecond)
-                let local = Time(seconds: localSeconds)
-                let sourceTime: Time = clip.sourceStart + map.sourceOffset(atTimeline: local, timelineDuration: clip.duration)
-                let source: Double = sourceTime.seconds
-                if let image = strip.image(atSeconds: source) {
-                    ctx.saveGState()
-                    ctx.translateBy(x: tx, y: frame.minY + 1 + tileHeight)
-                    ctx.scaleBy(x: 1, y: -1)
-                    ctx.draw(image, in: CGRect(x: 0, y: 0, width: tileWidth, height: tileHeight))
-                    ctx.restoreGState()
-                }
-                tx += tileWidth
-            }
-            ctx.setFillColor(UIColor.black.withAlphaComponent(0.18).cgColor)
-            ctx.fill(frame)
-        }
-        // 波形（Q59）
-        if clip.kind == .audio || (clip.kind == .video && track.kind == .video && project.asset(clip.mediaID)?.hasAudio == true),
-           let asset = project.asset(clip.mediaID), let features = AudioAnalyzer.cached(asset) {
+        drawFilmstrip(ctx, clip: clip, frame: frame, visible: visible, project: project)
+        if let features = waveformFeatures(clip: clip, track: track, project: project) {
             drawWaveform(ctx, features: features, clip: clip, frame: frame, visible: visible, onVideo: clip.kind == .video)
         }
-        // 名前とバッジ
+        drawClipLabel(clip, frame: frame, visible: visible)
+        drawKeyframes(ctx, clip: clip, frame: frame)
+        ctx.restoreGState()
+        if selected {
+            drawSelection(ctx, path: path, frame: frame)
+        }
+    }
+
+    /// 映像のコマ（フィルムストリップ）。
+    private func drawFilmstrip(_ ctx: CGContext, clip: Clip, frame: CGRect, visible: CGRect, project: Project) {
+        let visualKinds: Set<ClipKind> = [.video, .image, .gif]
+        if !visualKinds.contains(clip.kind) { return }
+        guard let asset = project.asset(clip.mediaID), let strip = ThumbnailStore.shared.strip(asset.id), let first = strip.images.first else { return }
+        let tileHeight: CGFloat = frame.height - 2
+        let imageWidth: CGFloat = CGFloat(first.width)
+        let imageHeight: CGFloat = CGFloat(max(1, first.height))
+        let aspect: CGFloat = imageWidth / imageHeight
+        let tileWidth: CGFloat = max(16, tileHeight * aspect)
+        let offset: CGFloat = visible.minX - frame.minX
+        let phase: CGFloat = offset.truncatingRemainder(dividingBy: tileWidth)
+        var tx: CGFloat = max(frame.minX, visible.minX - phase)
+        let map = SpeedMap(settings: clip.speed)
+        while tx < visible.maxX {
+            let distance: CGFloat = tx - frame.minX
+            let localSeconds: Double = Double(distance / pointsPerSecond)
+            let local = Time(seconds: localSeconds)
+            let sourceTime: Time = clip.sourceStart + map.sourceOffset(atTimeline: local, timelineDuration: clip.duration)
+            if let image = strip.image(atSeconds: sourceTime.seconds) {
+                let top: CGFloat = frame.minY + 1 + tileHeight
+                let tile = CGRect(x: 0, y: 0, width: tileWidth, height: tileHeight)
+                ctx.saveGState()
+                ctx.translateBy(x: tx, y: top)
+                ctx.scaleBy(x: 1, y: -1)
+                ctx.draw(image, in: tile)
+                ctx.restoreGState()
+            }
+            tx += tileWidth
+        }
+        ctx.setFillColor(UIColor.black.withAlphaComponent(0.18).cgColor)
+        ctx.fill(frame)
+    }
+
+    /// 波形を出すクリップなら、その音声の特徴量（Q59）。
+    private func waveformFeatures(clip: Clip, track: Track, project: Project) -> AudioFeatures? {
+        guard let asset = project.asset(clip.mediaID), asset.hasAudio else { return nil }
+        var shows: Bool = clip.kind == .audio
+        if clip.kind == .video && track.kind == .video {
+            shows = true
+        }
+        if !shows { return nil }
+        return AudioAnalyzer.cached(asset)
+    }
+
+    /// 名前とバッジ。
+    private func drawClipLabel(_ clip: Clip, frame: CGRect, visible: CGRect) {
         var title: String = clip.name
-        if clip.kind == .text || clip.kind == .sticker, let t = clip.text { title = t.string.replacingOccurrences(of: "\n", with: " ") }
+        if let t = clip.text, clip.kind == .text || clip.kind == .sticker {
+            title = t.string.replacingOccurrences(of: "\n", with: " ")
+        }
         let badges: [String] = clip.badges
-        if !badges.isEmpty { title += "  " + badges.joined(separator: " ") }
+        if !badges.isEmpty {
+            title += "  " + badges.joined(separator: " ")
+        }
+        let labelX: CGFloat = max(frame.minX + 6, visible.minX + 4)
+        let width: CGFloat = frame.maxX - labelX - 4
+        if width <= 20 { return }
         let attributes: [NSAttributedString.Key: Any] = [
             .font: UIFont.systemFont(ofSize: 11, weight: .semibold),
             .foregroundColor: UIColor.white
         ]
-        let labelX: CGFloat = max(frame.minX + 6, visible.minX + 4)
-        if frame.maxX - labelX > 24 {
-            let labelRect = CGRect(x: labelX, y: frame.minY + 3, width: frame.maxX - labelX - 4, height: 14)
-            (title as NSString).draw(with: labelRect, options: [.truncatesLastVisibleLine, .usesLineFragmentOrigin], attributes: attributes, context: nil)
-        }
-        // キーフレーム（Q44）
-        drawKeyframes(ctx, clip: clip, frame: frame)
-        ctx.restoreGState()
-        if selected {
-            ctx.setStrokeColor(UIColor.white.cgColor)
-            ctx.setLineWidth(2)
-            ctx.addPath(path.cgPath)
-            ctx.strokePath()
-            // トリムの取っ手
-            ctx.setFillColor(UIColor.white.cgColor)
-            let handleW: CGFloat = 10
-            let left = CGRect(x: frame.minX, y: frame.minY + 1, width: handleW, height: frame.height - 2)
-            let right = CGRect(x: frame.maxX - handleW, y: frame.minY + 1, width: handleW, height: frame.height - 2)
-            ctx.addPath(UIBezierPath(roundedRect: left, byRoundingCorners: [.topLeft, .bottomLeft], cornerRadii: CGSize(width: 5, height: 5)).cgPath)
-            ctx.addPath(UIBezierPath(roundedRect: right, byRoundingCorners: [.topRight, .bottomRight], cornerRadii: CGSize(width: 5, height: 5)).cgPath)
-            ctx.fillPath()
-            ctx.setFillColor(UIColor.black.withAlphaComponent(0.6).cgColor)
-            ctx.fill(CGRect(x: left.midX - 1, y: left.midY - 7, width: 2, height: 14))
-            ctx.fill(CGRect(x: right.midX - 1, y: right.midY - 7, width: 2, height: 14))
-        }
+        let labelRect = CGRect(x: labelX, y: frame.minY + 3, width: width, height: 14)
+        let options: NSStringDrawingOptions = [.truncatesLastVisibleLine, .usesLineFragmentOrigin]
+        (title as NSString).draw(with: labelRect, options: options, attributes: attributes, context: nil)
+    }
+
+    /// 選択枠とトリムの取っ手。
+    private func drawSelection(_ ctx: CGContext, path: UIBezierPath, frame: CGRect) {
+        ctx.setStrokeColor(UIColor.white.cgColor)
+        ctx.setLineWidth(2)
+        ctx.addPath(path.cgPath)
+        ctx.strokePath()
+        let handleWidth: CGFloat = 10
+        let handleHeight: CGFloat = frame.height - 2
+        let left = CGRect(x: frame.minX, y: frame.minY + 1, width: handleWidth, height: handleHeight)
+        let right = CGRect(x: frame.maxX - handleWidth, y: frame.minY + 1, width: handleWidth, height: handleHeight)
+        let radii = CGSize(width: 5, height: 5)
+        let leftCorners: UIRectCorner = [.topLeft, .bottomLeft]
+        let rightCorners: UIRectCorner = [.topRight, .bottomRight]
+        ctx.setFillColor(UIColor.white.cgColor)
+        ctx.addPath(UIBezierPath(roundedRect: left, byRoundingCorners: leftCorners, cornerRadii: radii).cgPath)
+        ctx.addPath(UIBezierPath(roundedRect: right, byRoundingCorners: rightCorners, cornerRadii: radii).cgPath)
+        ctx.fillPath()
+        ctx.setFillColor(UIColor.black.withAlphaComponent(0.6).cgColor)
+        ctx.fill(CGRect(x: left.midX - 1, y: left.midY - 7, width: 2, height: 14))
+        ctx.fill(CGRect(x: right.midX - 1, y: right.midY - 7, width: 2, height: 14))
     }
 
     private func drawWaveform(_ ctx: CGContext, features: AudioFeatures, clip: Clip, frame: CGRect, visible: CGRect, onVideo: Bool) {

@@ -146,49 +146,65 @@ struct FiltersPanel: View {
 
     var body: some View {
         if let clip = controller.selectedClip {
-            VStack(alignment: .leading, spacing: 10) {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 8) {
-                    Button("なし") { controller.updateSelected("フィルター") { $0.look = nil } }
-                        .buttonStyle(.bordered)
-                        .tint(clip.look == nil ? Theme.accent : nil)
-                    ForEach(BuiltinLooks.all) { look in
-                        Button(look.label) { select("builtin:" + look.id, clip: clip) }
-                            .buttonStyle(.bordered)
-                            .tint(clip.look?.id == "builtin:" + look.id ? Theme.accent : nil)
-                    }
+            content(clip)
+                .fileImporter(isPresented: $showImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+                    importLUTs(result)
                 }
-                .font(.caption)
-                if !imported.isEmpty {
-                    PanelTitle(text: "読み込んだ LUT")
-                    ForEach(imported, id: \.0) { item in
-                        Button(item.1) { select("lut:" + item.0.uuidString, clip: clip) }
-                            .buttonStyle(.bordered)
-                            .tint(clip.look?.id == "lut:" + item.0.uuidString ? Theme.accent : nil)
-                            .font(.caption)
-                    }
-                }
-                if let look = clip.look {
-                    ParamRow(label: "強さ", range: 0...1, value: look.intensity, onChange: { v in
-                        controller.updateSelected("フィルターの強さ", coalesce: "look-intensity") { $0.look?.intensity = v }
-                    })
-                }
-                Button {
-                    showImporter = true
-                } label: {
-                    Label("LUT（.cube）を読み込む", systemImage: "square.and.arrow.down")
-                }
-                .buttonStyle(.bordered)
-                .font(.footnote)
-            }
-            .fileImporter(isPresented: $showImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
-                if case .success(let urls) = result {
-                    for url in urls { importLUT(url) }
-                    imported = LUTLibrary.list()
-                }
-            }
         } else {
             SelectClipHint()
         }
+    }
+
+    private func content(_ clip: Clip) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            builtinGrid(clip)
+            if !imported.isEmpty {
+                PanelTitle(text: "読み込んだ LUT")
+                importedList(clip)
+            }
+            if let look = clip.look {
+                ParamRow(label: "強さ", range: 0...1, value: look.intensity, onChange: { v in
+                    controller.updateSelected("フィルターの強さ", coalesce: "look-intensity") { $0.look?.intensity = v }
+                })
+            }
+            Button {
+                showImporter = true
+            } label: {
+                Label("LUT（.cube）を読み込む", systemImage: "square.and.arrow.down")
+            }
+            .buttonStyle(.bordered)
+            .font(.footnote)
+        }
+    }
+
+    private func builtinGrid(_ clip: Clip) -> some View {
+        let columns: [GridItem] = Array(repeating: GridItem(.flexible()), count: 4)
+        let current: String? = clip.look?.id
+        return LazyVGrid(columns: columns, spacing: 8) {
+            LookChoice(title: "なし", isSelected: current == nil) {
+                controller.updateSelected("フィルター") { $0.look = nil }
+            }
+            ForEach(BuiltinLooks.all) { look in
+                let id: String = "builtin:" + look.id
+                LookChoice(title: look.label, isSelected: current == id) { select(id, clip: clip) }
+            }
+        }
+        .font(.caption)
+    }
+
+    private func importedList(_ clip: Clip) -> some View {
+        let current: String? = clip.look?.id
+        return ForEach(imported, id: \.0) { item in
+            let id: String = "lut:" + item.0.uuidString
+            LookChoice(title: item.1, isSelected: current == id) { select(id, clip: clip) }
+                .font(.caption)
+        }
+    }
+
+    private func importLUTs(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result else { return }
+        for url in urls { importLUT(url) }
+        imported = LUTLibrary.list()
     }
 
     private func select(_ id: String, clip: Clip) {
@@ -202,6 +218,19 @@ struct FiltersPanel: View {
         } catch {
             controller.alert = EditorAlert(title: "LUT を読み込めません", message: error.localizedDescription)
         }
+    }
+}
+
+/// フィルターの選択肢 1 つ（選んでいるものは強調色）。
+struct LookChoice: View {
+    let title: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(title, action: action)
+            .buttonStyle(.bordered)
+            .tint(isSelected ? Theme.accent : nil)
     }
 }
 
