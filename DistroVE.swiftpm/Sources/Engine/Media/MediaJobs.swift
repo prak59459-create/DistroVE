@@ -178,7 +178,7 @@ enum AudioProcessor {
         engine.connect(chain[chain.count - 1], to: engine.mainMixerNode, format: format)
         try engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
         try engine.start()
-        player.scheduleFile(input, at: nil, completionHandler: nil)
+        schedule(input, on: player)
         player.play()
         let folder: URL = AppPaths.media.appendingPathComponent("ProcessedAudio", isDirectory: true)
         AppPaths.ensure(folder)
@@ -214,6 +214,12 @@ enum AudioProcessor {
         player.stop()
         engine.stop()
         return "ProcessedAudio/" + outputURL.lastPathComponent
+    }
+
+    /// 再生の予約だけをする。async 版の scheduleFile は再生し終わるまで戻らないため、
+    /// オフラインで書き出すここでは使えない（同期の関数から呼んで、完了ハンドラー版を使う）。
+    private static func schedule(_ file: AVAudioFile, on player: AVAudioPlayerNode) {
+        player.scheduleFile(file, at: nil, completionHandler: nil)
     }
 
     static func configureEQ(_ eq: AVAudioUnitEQ, preset: EQPreset, denoise: Double) {

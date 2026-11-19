@@ -178,7 +178,7 @@ final class ColorPipeline: @unchecked Sendable {
                         let x: Double = Num.clamp((distance - tolerance) / softness, 0, 1)
                         alpha = x * x * (3 - 2 * x)
                     }
-                    var rr: Double = r
+                    let rr: Double = r
                     var gg: Double = g
                     var bb: Double = b
                     // 緑・青の色かぶりを抑える

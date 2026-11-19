@@ -22,79 +22,105 @@ struct CubeLUT: Sendable {
     }
 
     static func parse(_ text: String) throws -> CubeLUT {
-        var title: String = "LUT"
-        var size3D: Int = 0
-        var size1D: Int = 0
-        var domainMin: [Float] = [0, 0, 0]
-        var domainMax: [Float] = [1, 1, 1]
+        var header = Header()
         var values: [Float] = []
         values.reserveCapacity(36_000 * 3)
         let lines: [Substring] = text.split(whereSeparator: { $0 == "\n" || $0 == "\r" })
         for rawLine in lines {
             let line: String = rawLine.trimmingCharacters(in: .whitespaces)
-            if line.isEmpty || line.hasPrefix("#") { continue }
+            if line.isEmpty || line.hasPrefix("#") || header.read(line) { continue }
+            CubeLUT.appendTriple(line, to: &values)
+        }
+        if header.size3D > 0 { return try CubeLUT.make3D(values, header: header) }
+        if header.size1D > 0 { return try CubeLUT.make1D(values, header: header) }
+        throw ParseError.missingSize
+    }
+
+    /// ヘッダー行（TITLE・LUT_3D_SIZE・DOMAIN_MIN など）の読み取り結果。
+    private struct Header {
+        var title: String = "LUT"
+        var size3D: Int = 0
+        var size1D: Int = 0
+        var domainMin: [Float] = [0, 0, 0]
+        var domainMax: [Float] = [1, 1, 1]
+
+        /// ヘッダー行なら読み取って true を返す（知らない LUT_ 行は読み飛ばす）。
+        mutating func read(_ line: String) -> Bool {
             let upper: String = line.uppercased()
             if upper.hasPrefix("TITLE") {
-                title = line.dropFirst(5).trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-                continue
+                let rest: String = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+                title = rest.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+            } else if upper.hasPrefix("LUT_3D_SIZE") {
+                size3D = Header.lastInt(line)
+            } else if upper.hasPrefix("LUT_1D_SIZE") {
+                size1D = Header.lastInt(line)
+            } else if upper.hasPrefix("DOMAIN_MIN") {
+                domainMin = CubeLUT.parseTriple(line)
+            } else if upper.hasPrefix("DOMAIN_MAX") {
+                domainMax = CubeLUT.parseTriple(line)
+            } else {
+                return upper.hasPrefix("LUT_")
             }
-            if upper.hasPrefix("LUT_3D_SIZE") {
-                size3D = Int(line.split(separator: " ").last ?? "") ?? 0
-                continue
-            }
-            if upper.hasPrefix("LUT_1D_SIZE") {
-                size1D = Int(line.split(separator: " ").last ?? "") ?? 0
-                continue
-            }
-            if upper.hasPrefix("DOMAIN_MIN") {
-                domainMin = parseTriple(line)
-                continue
-            }
-            if upper.hasPrefix("DOMAIN_MAX") {
-                domainMax = parseTriple(line)
-                continue
-            }
-            if upper.hasPrefix("LUT_") { continue }
-            let parts: [Substring] = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
-            if parts.count < 3 { continue }
-            guard let r = Float(parts[0]), let g = Float(parts[1]), let b = Float(parts[2]) else { continue }
-            values.append(r)
-            values.append(g)
-            values.append(b)
+            return true
         }
-        let rangeR: Float = max(0.0001, domainMax[0] - domainMin[0])
-        let rangeG: Float = max(0.0001, domainMax[1] - domainMin[1])
-        let rangeB: Float = max(0.0001, domainMax[2] - domainMin[2])
-        if size3D > 0 {
-            if size3D > 65 { throw ParseError.tooLarge }
-            let expected: Int = size3D * size3D * size3D
-            if values.count / 3 != expected { throw ParseError.wrongCount(expected: expected, found: values.count / 3) }
-            var data: [Float] = []
-            data.reserveCapacity(expected * 4)
-            for i in 0..<expected {
-                data.append((values[i * 3] - domainMin[0]) / rangeR)
-                data.append((values[i * 3 + 1] - domainMin[1]) / rangeG)
-                data.append((values[i * 3 + 2] - domainMin[2]) / rangeB)
-                data.append(1)
-            }
-            return CubeLUT(title: title, size: size3D, data: data)
+
+        private static func lastInt(_ line: String) -> Int {
+            let last: Substring = line.split(separator: " ").last ?? ""
+            return Int(last) ?? 0
         }
-        if size1D > 0 {
-            if values.count / 3 != size1D { throw ParseError.wrongCount(expected: size1D, found: values.count / 3) }
-            var red: [Float] = []
-            var green: [Float] = []
-            var blue: [Float] = []
-            for i in 0..<size1D {
-                red.append((values[i * 3] - domainMin[0]) / rangeR)
-                green.append((values[i * 3 + 1] - domainMin[1]) / rangeG)
-                blue.append((values[i * 3 + 2] - domainMin[2]) / rangeB)
-            }
-            let lut: CubeLUT = CubeLUT.generate(size: 33, title: title) { r, g, b in
-                return (CubeLUT.sample1D(red, r), CubeLUT.sample1D(green, g), CubeLUT.sample1D(blue, b))
-            }
-            return lut
+
+        /// 入力の範囲（DOMAIN_MIN〜DOMAIN_MAX）を 0〜1 に直す。
+        func normalized(_ value: Float, channel: Int) -> Float {
+            let low: Float = domainMin[channel]
+            let range: Float = max(0.0001, domainMax[channel] - low)
+            return (value - low) / range
         }
-        throw ParseError.missingSize
+    }
+
+    private static func appendTriple(_ line: String, to values: inout [Float]) {
+        let parts: [Substring] = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
+        if parts.count < 3 { return }
+        guard let r = Float(parts[0]), let g = Float(parts[1]), let b = Float(parts[2]) else { return }
+        values.append(r)
+        values.append(g)
+        values.append(b)
+    }
+
+    private static func make3D(_ values: [Float], header: Header) throws -> CubeLUT {
+        let size: Int = header.size3D
+        if size > 65 { throw ParseError.tooLarge }
+        let expected: Int = size * size * size
+        let found: Int = values.count / 3
+        if found != expected { throw ParseError.wrongCount(expected: expected, found: found) }
+        var data: [Float] = []
+        data.reserveCapacity(expected * 4)
+        for i in 0..<expected {
+            let base: Int = i * 3
+            data.append(header.normalized(values[base], channel: 0))
+            data.append(header.normalized(values[base + 1], channel: 1))
+            data.append(header.normalized(values[base + 2], channel: 2))
+            data.append(1)
+        }
+        return CubeLUT(title: header.title, size: size, data: data)
+    }
+
+    /// 1D LUT は 3D の変換表に直して使う。
+    private static func make1D(_ values: [Float], header: Header) throws -> CubeLUT {
+        let size: Int = header.size1D
+        let found: Int = values.count / 3
+        if found != size { throw ParseError.wrongCount(expected: size, found: found) }
+        var red: [Float] = []
+        var green: [Float] = []
+        var blue: [Float] = []
+        for i in 0..<size {
+            let base: Int = i * 3
+            red.append(header.normalized(values[base], channel: 0))
+            green.append(header.normalized(values[base + 1], channel: 1))
+            blue.append(header.normalized(values[base + 2], channel: 2))
+        }
+        return CubeLUT.generate(size: 33, title: header.title) { r, g, b in
+            return (CubeLUT.sample1D(red, r), CubeLUT.sample1D(green, g), CubeLUT.sample1D(blue, b))
+        }
     }
 
     private static func parseTriple(_ line: String) -> [Float] {
