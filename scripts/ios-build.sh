@@ -3,6 +3,7 @@
 #   1. 初回ビルド        … SDK（SwiftUI・AVFoundation など）のモジュールキャッシュ作りを含む。端末で最初の 1 回だけ
 #   2. クリーンビルド    … モジュールキャッシュがある状態で、アプリのコードだけを全部作り直す
 #   3. 差分ビルド        … 1 ファイルだけ変えた、ふだんの「直して実行」。3 回測って中央値を使う
+#   4. 変更なしのビルド  … 何も変えずにもう一度。xcodebuild 自体の準備と確認にかかる時間
 # 目標 10 秒・上限 60 秒（2 と 3 に当てはめる）。
 set -uo pipefail
 cd "$(dirname "$0")/../DistroVE.swiftpm"
@@ -38,11 +39,13 @@ status=$?
 cold=$(since "$start")
 grep -E "error:" "$LOG" | head -100
 grep -E "BUILD (SUCCEEDED|FAILED)" "$LOG" | tail -1
-echo "1. 初回ビルド（モジュールキャッシュ作成を含む）: ${cold} 秒"
 if [ "${status}" -ne 0 ]; then
   tail -40 "$LOG"
   exit "${status}"
 fi
+echo "--- 初回ビルドの内訳 ---"
+summary 12
+echo "1. 初回ビルド（モジュールキャッシュ作成を含む）: ${cold} 秒"
 
 xcodebuild clean -scheme "$SCHEME" -destination "$DEST" -derivedDataPath "$DERIVED" -quiet > /dev/null 2>&1
 start=$(now)
@@ -58,14 +61,19 @@ for i in 1 2 3; do
   start=$(now)
   build
   runs+=("$(since "$start")")
+  echo "--- 差分ビルド ${i} 回目の内訳 ---"
+  summary 4
 done
-git checkout -- "$TOUCHED" 2>/dev/null || true
-echo "--- 差分ビルドの内訳（3 回目） ---"
-summary 8
 incremental=$(printf '%s\n' "${runs[@]}" | sort -n | sed -n 2p)
 echo "3. 差分ビルド（1 ファイル変更・3 回の中央値）: ${incremental} 秒（${runs[*]}）"
 
-echo "::notice title=ビルド時間::初回 ${cold} 秒 / クリーン ${clean} 秒 / 差分 ${incremental} 秒（目標 10 秒・上限 60 秒）"
+start=$(now)
+build
+noop=$(since "$start")
+git checkout -- "$TOUCHED" 2>/dev/null || true
+echo "4. 変更なしのビルド（xcodebuild 自体の準備と確認だけ）: ${noop} 秒"
+
+echo "::notice title=ビルド時間::初回 ${cold} 秒 / クリーン ${clean} 秒 / 差分 ${incremental} 秒 / 変更なし ${noop} 秒（目標 10 秒・上限 60 秒）"
 if over "$clean" 60; then
   echo "::warning title=ビルド時間::クリーンビルドが上限の 60 秒を超えました（${clean} 秒）"
 fi
