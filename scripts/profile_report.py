@@ -11,19 +11,24 @@ import os
 import re
 import sys
 
-# 入れ子になっていない、大きな段階だけを表示する（入れ子の計測を足すと二重に数えるため）
+# 大きな段階。上の 2 つは重ならず、下の 3 つは「SIL と LLVM の処理」の内側にある
 PHASES = [
     ("Type checking and Semantic analysis", "型チェック"),
-    ("SILGen", "SIL の生成"),
-    ("SIL optimization", "SIL の最適化"),
-    ("IRGen", "LLVM IR の生成"),
-    ("LLVM pipeline", "LLVM（機械語の生成）"),
-    ("SIL-and-LLVM-processing", "SIL と LLVM の処理（合計）"),
+    ("SIL-and-LLVM-processing", "SIL と LLVM の処理（機械語まで）"),
+    ("SILGen", "  SIL の生成"),
+    ("SIL-processing", "  SIL の処理"),
+    ("IRGen", "  LLVM IR の生成"),
 ]
+KNOWN = {key for key, _ in PHASES}
+# 型チェックの内側の計測（上の段階と二重に数えるので「その他」には出さない）
+NESTED = {
+    "perform-sema", "typecheck-stmt", "typecheck-expr", "typecheck-decl", "typecheck-expr-pattern",
+    "typecheck-for-each", "precheck-target", "SILGen-function", "SIL-mandatory-passes",
+    "SIL optimization", "Import resolution",
+}
 
 
-def main() -> int:
-    work = sys.argv[1]
+def read_stats(work):
     totals = {}
     frontend_total = 0.0
     for path in glob.glob(os.path.join(work, "stats", "*.json")):
@@ -37,12 +42,27 @@ def main() -> int:
             elif key.startswith("time.swift."):
                 name = key[len("time.swift."):-len(".wall")]
                 totals[name] = totals.get(name, 0.0) + float(value)
+    return frontend_total, totals
+
+
+def print_phases(frontend_total, totals):
     print("--- コンパイラの段階ごとの時間（秒） ---")
     if frontend_total > 0:
         print(f"{frontend_total:8.2f}  全体（コンパイラ本体）")
     for key, label in PHASES:
         if key in totals:
             print(f"{totals[key]:8.2f}  {label}")
+    typecheck = totals.get("Type checking and Semantic analysis")
+    if frontend_total > 0 and typecheck is not None:
+        print(f"{frontend_total - typecheck:8.2f}  型チェック以外（全体 − 型チェック）")
+    others = [(k, v) for k, v in totals.items() if k not in KNOWN and k not in NESTED and v >= 0.1]
+    if others:
+        print("--- そのほかに記録された段階（秒） ---")
+        for key, value in sorted(others, key=lambda kv: -kv[1])[:8]:
+            print(f"{value:8.2f}  {key}")
+
+
+def print_function_bodies(work):
     per_file = {}
     pattern = re.compile(r"^([0-9.]+)ms\s+(\S+?\.swift):")
     log = os.path.join(work, "out.log")
@@ -58,6 +78,14 @@ def main() -> int:
     for key, value in sorted(per_file.items(), key=lambda kv: -kv[1])[:15]:
         print(f"{value:8.0f}  {key}")
     print(f"合計: {sum(per_file.values()):.0f} ms")
+    return per_file
+
+
+def main() -> int:
+    work = sys.argv[1]
+    frontend_total, totals = read_stats(work)
+    print_phases(frontend_total, totals)
+    per_file = print_function_bodies(work)
     if frontend_total == 0 and not per_file:
         print("統計が取れませんでした")
         return 1

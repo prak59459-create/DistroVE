@@ -36,184 +36,120 @@ final class Exporter: @unchecked Sendable {
         options.fps = Double(settings.fps)
         options.includeAudio = settings.includeAudio
         let built: CompositionBuilder.Result = try await builder.build(project: project, options: options)
-        let composition: AVComposition = built.composition
-        let range: CMTimeRange = (settings.range ?? TimeRange(start: .zero, duration: built.duration)).cmTimeRange
+        let whole = TimeRange(start: .zero, duration: built.duration)
+        let range: CMTimeRange = (settings.range ?? whole).cmTimeRange
+        let source: ReaderSetup = try Exporter.makeReader(built: built, range: range, includeAudio: settings.includeAudio)
+        try? FileManager.default.removeItem(at: url)
+        let sink: WriterSetup = try Exporter.makeWriter(url: url, settings: settings, width: size.width, height: size.height, withAudio: source.audio != nil)
+        guard source.reader.startReading() else {
+            throw EngineError.exportFailed(source.reader.error?.localizedDescription ?? "読み込みを始められません")
+        }
+        guard sink.writer.startWriting() else {
+            throw EngineError.exportFailed(sink.writer.error?.localizedDescription ?? "書き込みを始められません")
+        }
+        sink.writer.startSession(atSourceTime: range.start)
+        let job = TranscodeJob(source: source, sink: sink, url: url, range: range, cancelFlag: cancelled, progress: progress)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            job.run(continuation)
+        }
+    }
 
+    /// 読み込み側。合成した映像（と音）を取り出す出口を用意する。
+    private static func makeReader(built: CompositionBuilder.Result, range: CMTimeRange, includeAudio: Bool) throws -> ReaderSetup {
+        let composition: AVComposition = built.composition
         let reader = try AVAssetReader(asset: composition)
         reader.timeRange = range
         let videoTracks: [AVAssetTrack] = composition.tracks(withMediaType: .video)
-        let videoOutput = AVAssetReaderVideoCompositionOutput(videoTracks: videoTracks, videoSettings: [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
-        ])
+        let videoOutput = AVAssetReaderVideoCompositionOutput(videoTracks: videoTracks, videoSettings: Exporter.readerVideoSettings())
         videoOutput.videoComposition = built.videoComposition
         videoOutput.alwaysCopiesSampleData = false
         if reader.canAdd(videoOutput) { reader.add(videoOutput) }
-
-        var audioOutput: AVAssetReaderAudioMixOutput?
         let audioTracks: [AVAssetTrack] = composition.tracks(withMediaType: .audio)
-        if settings.includeAudio && !audioTracks.isEmpty {
-            let output = AVAssetReaderAudioMixOutput(audioTracks: audioTracks, audioSettings: [
-                AVFormatIDKey: kAudioFormatLinearPCM,
-                AVSampleRateKey: 48_000,
-                AVNumberOfChannelsKey: 2,
-                AVLinearPCMBitDepthKey: 16,
-                AVLinearPCMIsFloatKey: false,
-                AVLinearPCMIsBigEndianKey: false,
-                AVLinearPCMIsNonInterleaved: false
-            ])
-            output.audioMix = built.audioMix
-            output.audioTimePitchAlgorithm = .spectral
-            output.alwaysCopiesSampleData = false
-            if reader.canAdd(output) {
-                reader.add(output)
-                audioOutput = output
-            }
+        guard includeAudio && !audioTracks.isEmpty else {
+            return ReaderSetup(reader: reader, video: videoOutput, audio: nil)
         }
+        let audioOutput = AVAssetReaderAudioMixOutput(audioTracks: audioTracks, audioSettings: Exporter.readerAudioSettings())
+        audioOutput.audioMix = built.audioMix
+        audioOutput.audioTimePitchAlgorithm = .spectral
+        audioOutput.alwaysCopiesSampleData = false
+        guard reader.canAdd(audioOutput) else {
+            return ReaderSetup(reader: reader, video: videoOutput, audio: nil)
+        }
+        reader.add(audioOutput)
+        return ReaderSetup(reader: reader, video: videoOutput, audio: audioOutput)
+    }
 
-        try? FileManager.default.removeItem(at: url)
+    /// 書き込み側。ハードウェアエンコーダーへの入口を用意する。
+    private static func makeWriter(url: URL, settings: ExportSettings, width: Int, height: Int, withAudio: Bool) throws -> WriterSetup {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
         writer.shouldOptimizeForNetworkUse = true
-        let bitrate: Int = settings.effectiveBitrate(width: size.width, height: size.height)
-        var compression: [String: Any] = [
-            AVVideoAverageBitRateKey: bitrate,
-            AVVideoExpectedSourceFrameRateKey: settings.fps,
-            AVVideoMaxKeyFrameIntervalKey: settings.fps * 2
-        ]
-        if settings.codec == .h264 {
-            compression[AVVideoProfileLevelKey] = AVVideoProfileLevelH264HighAutoLevel
-        }
-        let codec: AVVideoCodecType = settings.codec == .hevc ? .hevc : .h264
-        let videoSettings: [String: Any] = [
-            AVVideoCodecKey: codec,
-            AVVideoWidthKey: size.width,
-            AVVideoHeightKey: size.height,
-            AVVideoCompressionPropertiesKey: compression,
-            AVVideoColorPropertiesKey: [
-                AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
-                AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
-                AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2
-            ]
-        ]
+        let videoSettings: [String: Any] = Exporter.writerVideoSettings(settings, width: width, height: height)
         let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
         videoInput.expectsMediaDataInRealTime = false
         guard writer.canAdd(videoInput) else { throw EngineError.exportFailed("この設定では映像を書き出せません") }
         writer.add(videoInput)
-        var audioInput: AVAssetWriterInput?
-        if audioOutput != nil {
-            let input = AVAssetWriterInput(mediaType: .audio, outputSettings: [
-                AVFormatIDKey: kAudioFormatMPEG4AAC,
-                AVSampleRateKey: 48_000,
-                AVNumberOfChannelsKey: 2,
-                AVEncoderBitRateKey: 192_000
-            ])
-            input.expectsMediaDataInRealTime = false
-            if writer.canAdd(input) {
-                writer.add(input)
-                audioInput = input
-            }
+        guard withAudio else {
+            return WriterSetup(writer: writer, video: videoInput, audio: nil)
         }
-
-        guard reader.startReading() else {
-            throw EngineError.exportFailed(reader.error?.localizedDescription ?? "読み込みを始められません")
+        let audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: Exporter.writerAudioSettings())
+        audioInput.expectsMediaDataInRealTime = false
+        guard writer.canAdd(audioInput) else {
+            return WriterSetup(writer: writer, video: videoInput, audio: nil)
         }
-        guard writer.startWriting() else {
-            throw EngineError.exportFailed(writer.error?.localizedDescription ?? "書き込みを始められません")
+        writer.add(audioInput)
+        return WriterSetup(writer: writer, video: videoInput, audio: audioInput)
+    }
+
+    // 設定の辞書は 1 項目ずつ入れる（値の型が混ざった辞書リテラルは型チェックが重い）
+
+    private static func readerVideoSettings() -> [String: Any] {
+        let format: OSType = kCVPixelFormatType_32BGRA
+        var values: [String: Any] = [:]
+        values[kCVPixelBufferPixelFormatTypeKey as String] = format
+        return values
+    }
+
+    private static func readerAudioSettings() -> [String: Any] {
+        var values: [String: Any] = [:]
+        values[AVFormatIDKey] = kAudioFormatLinearPCM
+        values[AVSampleRateKey] = 48_000
+        values[AVNumberOfChannelsKey] = 2
+        values[AVLinearPCMBitDepthKey] = 16
+        values[AVLinearPCMIsFloatKey] = false
+        values[AVLinearPCMIsBigEndianKey] = false
+        values[AVLinearPCMIsNonInterleaved] = false
+        return values
+    }
+
+    private static func writerVideoSettings(_ settings: ExportSettings, width: Int, height: Int) -> [String: Any] {
+        var compression: [String: Any] = [:]
+        compression[AVVideoAverageBitRateKey] = settings.effectiveBitrate(width: width, height: height)
+        compression[AVVideoExpectedSourceFrameRateKey] = settings.fps
+        compression[AVVideoMaxKeyFrameIntervalKey] = settings.fps * 2
+        if settings.codec == .h264 {
+            compression[AVVideoProfileLevelKey] = AVVideoProfileLevelH264HighAutoLevel
         }
-        writer.startSession(atSourceTime: range.start)
-        let totalSeconds: Double = max(0.001, range.duration.seconds)
-        let startSeconds: Double = range.start.seconds
-        let cancelFlag: Locked<Bool> = cancelled
+        var color: [String: Any] = [:]
+        color[AVVideoColorPrimariesKey] = AVVideoColorPrimaries_ITU_R_709_2
+        color[AVVideoTransferFunctionKey] = AVVideoTransferFunction_ITU_R_709_2
+        color[AVVideoYCbCrMatrixKey] = AVVideoYCbCrMatrix_ITU_R_709_2
+        let codec: AVVideoCodecType = settings.codec == .hevc ? .hevc : .h264
+        var values: [String: Any] = [:]
+        values[AVVideoCodecKey] = codec
+        values[AVVideoWidthKey] = width
+        values[AVVideoHeightKey] = height
+        values[AVVideoCompressionPropertiesKey] = compression
+        values[AVVideoColorPropertiesKey] = color
+        return values
+    }
 
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let group = DispatchGroup()
-            let videoQueue = DispatchQueue(label: "com.distrove.export.video")
-            let audioQueue = DispatchQueue(label: "com.distrove.export.audio")
-            let videoFinished = Locked<Bool>(false)
-            let audioFinished = Locked<Bool>(false)
-
-            group.enter()
-            videoInput.requestMediaDataWhenReady(on: videoQueue) {
-                while videoInput.isReadyForMoreMediaData {
-                    if videoFinished.get() { return }
-                    if cancelFlag.get() || reader.status != .reading {
-                        videoFinished.set(true)
-                        videoInput.markAsFinished()
-                        group.leave()
-                        return
-                    }
-                    if let sample = videoOutput.copyNextSampleBuffer() {
-                        let pts: CMTime = CMSampleBufferGetPresentationTimeStamp(sample)
-                        if !videoInput.append(sample) {
-                            videoFinished.set(true)
-                            videoInput.markAsFinished()
-                            group.leave()
-                            return
-                        }
-                        progress(Num.clamp((pts.seconds - startSeconds) / totalSeconds, 0, 1))
-                    } else {
-                        videoFinished.set(true)
-                        videoInput.markAsFinished()
-                        group.leave()
-                        return
-                    }
-                }
-            }
-
-            if let audioInput = audioInput, let audioOutput = audioOutput {
-                group.enter()
-                audioInput.requestMediaDataWhenReady(on: audioQueue) {
-                    while audioInput.isReadyForMoreMediaData {
-                        if audioFinished.get() { return }
-                        if cancelFlag.get() || reader.status != .reading {
-                            audioFinished.set(true)
-                            audioInput.markAsFinished()
-                            group.leave()
-                            return
-                        }
-                        if let sample = audioOutput.copyNextSampleBuffer() {
-                            if !audioInput.append(sample) {
-                                audioFinished.set(true)
-                                audioInput.markAsFinished()
-                                group.leave()
-                                return
-                            }
-                        } else {
-                            audioFinished.set(true)
-                            audioInput.markAsFinished()
-                            group.leave()
-                            return
-                        }
-                    }
-                }
-            }
-
-            group.notify(queue: DispatchQueue.global(qos: .userInitiated)) {
-                if cancelFlag.get() {
-                    reader.cancelReading()
-                    writer.cancelWriting()
-                    try? FileManager.default.removeItem(at: url)
-                    continuation.resume(throwing: EngineError.cancelled)
-                    return
-                }
-                if reader.status == .failed {
-                    writer.cancelWriting()
-                    continuation.resume(throwing: EngineError.exportFailed(reader.error?.localizedDescription ?? "読み込みエラー"))
-                    return
-                }
-                if writer.status == .failed {
-                    continuation.resume(throwing: EngineError.exportFailed(writer.error?.localizedDescription ?? "書き込みエラー"))
-                    return
-                }
-                writer.finishWriting {
-                    if writer.status == .completed {
-                        progress(1)
-                        continuation.resume()
-                    } else {
-                        continuation.resume(throwing: EngineError.exportFailed(writer.error?.localizedDescription ?? "保存エラー"))
-                    }
-                }
-            }
-        }
+    private static func writerAudioSettings() -> [String: Any] {
+        var values: [String: Any] = [:]
+        values[AVFormatIDKey] = kAudioFormatMPEG4AAC
+        values[AVSampleRateKey] = 48_000
+        values[AVNumberOfChannelsKey] = 2
+        values[AVEncoderBitRateKey] = 192_000
+        return values
     }
 
     // MARK: GIF
@@ -270,6 +206,112 @@ final class Exporter: @unchecked Sendable {
         generator.requestedTimeToleranceAfter = .zero
         let t: Time = min(time, max(.zero, built.duration - project.frameDuration))
         return try await generator.image(at: t.cmTime).image
+    }
+}
+
+/// 読み込み側（合成した映像と音の出口）。
+private struct ReaderSetup {
+    let reader: AVAssetReader
+    let video: AVAssetReaderVideoCompositionOutput
+    let audio: AVAssetReaderAudioMixOutput?
+}
+
+/// 書き込み側（エンコーダーへの入口）。
+private struct WriterSetup {
+    let writer: AVAssetWriter
+    let video: AVAssetWriterInput
+    let audio: AVAssetWriterInput?
+}
+
+/// 読んだサンプルを書き込み側へ流す。映像と音は別のキューで並行に進め、両方が終わったら仕上げる。
+private final class TranscodeJob: @unchecked Sendable {
+    private let source: ReaderSetup
+    private let sink: WriterSetup
+    private let url: URL
+    private let startSeconds: Double
+    private let totalSeconds: Double
+    private let cancelFlag: Locked<Bool>
+    private let progress: @Sendable (Double) -> Void
+    private let group = DispatchGroup()
+
+    init(source: ReaderSetup, sink: WriterSetup, url: URL, range: CMTimeRange, cancelFlag: Locked<Bool>, progress: @escaping @Sendable (Double) -> Void) {
+        self.source = source
+        self.sink = sink
+        self.url = url
+        self.startSeconds = range.start.seconds
+        self.totalSeconds = max(0.001, range.duration.seconds)
+        self.cancelFlag = cancelFlag
+        self.progress = progress
+    }
+
+    func run(_ continuation: CheckedContinuation<Void, Error>) {
+        group.enter()
+        pump(from: source.video, to: sink.video, label: "com.distrove.export.video", reportsProgress: true)
+        if let input = sink.audio, let output = source.audio {
+            group.enter()
+            pump(from: output, to: input, label: "com.distrove.export.audio", reportsProgress: false)
+        }
+        group.notify(queue: DispatchQueue.global(qos: .userInitiated)) {
+            self.finish(continuation)
+        }
+    }
+
+    private func pump(from output: AVAssetReaderOutput, to input: AVAssetWriterInput, label: String, reportsProgress: Bool) {
+        let queue = DispatchQueue(label: label)
+        let finished = Locked<Bool>(false)
+        input.requestMediaDataWhenReady(on: queue) {
+            while input.isReadyForMoreMediaData {
+                if finished.get() { return }
+                guard let sample = self.nextSample(from: output), input.append(sample) else {
+                    finished.set(true)
+                    input.markAsFinished()
+                    self.group.leave()
+                    return
+                }
+                if reportsProgress { self.report(sample) }
+            }
+        }
+    }
+
+    private func nextSample(from output: AVAssetReaderOutput) -> CMSampleBuffer? {
+        if cancelFlag.get() || source.reader.status != .reading { return nil }
+        return output.copyNextSampleBuffer()
+    }
+
+    private func report(_ sample: CMSampleBuffer) {
+        let pts: CMTime = CMSampleBufferGetPresentationTimeStamp(sample)
+        let fraction: Double = (pts.seconds - startSeconds) / totalSeconds
+        progress(Num.clamp(fraction, 0, 1))
+    }
+
+    private func finish(_ continuation: CheckedContinuation<Void, Error>) {
+        let reader: AVAssetReader = source.reader
+        let writer: AVAssetWriter = sink.writer
+        if cancelFlag.get() {
+            reader.cancelReading()
+            writer.cancelWriting()
+            try? FileManager.default.removeItem(at: url)
+            continuation.resume(throwing: EngineError.cancelled)
+            return
+        }
+        if reader.status == .failed {
+            writer.cancelWriting()
+            continuation.resume(throwing: EngineError.exportFailed(reader.error?.localizedDescription ?? "読み込みエラー"))
+            return
+        }
+        if writer.status == .failed {
+            continuation.resume(throwing: EngineError.exportFailed(writer.error?.localizedDescription ?? "書き込みエラー"))
+            return
+        }
+        let progress: @Sendable (Double) -> Void = self.progress
+        writer.finishWriting {
+            if writer.status == .completed {
+                progress(1)
+                continuation.resume()
+            } else {
+                continuation.resume(throwing: EngineError.exportFailed(writer.error?.localizedDescription ?? "保存エラー"))
+            }
+        }
     }
 }
 #endif
