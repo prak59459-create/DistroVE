@@ -21,6 +21,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         Diagnostics.shared.start()
         Task.detached(priority: .background) {
             CacheManager.autoClean()
+            if ContentUpdater.shared.autoCheck {
+                _ = try? await ContentUpdater.shared.update()
+            }
         }
         return true
     }

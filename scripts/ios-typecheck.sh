@@ -9,6 +9,37 @@ LOG="$(mktemp)"
 LIST="$(mktemp)"
 find Sources -name '*.swift' | sort > "$LIST"
 echo "対象ファイル: $(wc -l < "$LIST" | tr -d ' ') 個 / $(cat "$LIST" | xargs cat | wc -l | tr -d ' ') 行"
+# 基準：アプリが使うフレームワークを読み込むだけの時間
+BASE="$(mktemp -d)/Imports.swift"
+cat > "$BASE" <<'SWIFT'
+import Accelerate
+import AVFoundation
+import AVKit
+import Combine
+import CoreImage
+import CoreText
+import CryptoKit
+import ImageIO
+import Metal
+import MetricKit
+import PencilKit
+import PhotosUI
+import ReplayKit
+import Speech
+import SwiftUI
+import UIKit
+import UniformTypeIdentifiers
+import Vision
+SWIFT
+start=$(date +%s)
+xcrun --sdk iphonesimulator swiftc -typecheck -sdk "$SDK" -target "${ARCH}-apple-ios17.0-simulator" "$BASE" > /dev/null 2>&1
+end=$(date +%s)
+echo "フレームワークの読み込みだけ（初回）: $((end - start)) 秒"
+start=$(date +%s)
+xcrun --sdk iphonesimulator swiftc -typecheck -sdk "$SDK" -target "${ARCH}-apple-ios17.0-simulator" "$BASE" > /dev/null 2>&1
+end=$(date +%s)
+echo "フレームワークの読み込みだけ（2 回目）: $((end - start)) 秒"
+
 start=$(date +%s)
 xcrun --sdk iphonesimulator swiftc -typecheck \
   -sdk "$SDK" -target "${ARCH}-apple-ios17.0-simulator" \

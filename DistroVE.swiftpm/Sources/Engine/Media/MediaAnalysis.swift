@@ -77,8 +77,10 @@ enum AudioAnalyzer {
         private var features: AudioFeatures
         private var pending: [Float] = []
         private var lowSetup: vDSP_biquad_Setup?
+        private var highSetup: vDSP_biquad_Setup?
         private var kSetup: vDSP_biquad_Setup?
         private var lowDelay: [Float] = Array(repeating: 0, count: 4)
+        private var highDelay: [Float] = Array(repeating: 0, count: 4)
         private var kDelay: [Float] = Array(repeating: 0, count: 6)
 
         init(sampleRate: Double, channels: Int, frameRate: Double) {
@@ -88,12 +90,15 @@ enum AudioAnalyzer {
             self.features = AudioFeatures(frameRate: sampleRate / Double(max(1, Int(sampleRate / frameRate))), sampleRate: sampleRate, channels: max(1, channels))
             let low: [Double] = StreamingExtractor.lowPass(fs: sampleRate, cutoff: 150)
             lowSetup = low.withUnsafeBufferPointer { vDSP_biquad_CreateSetup($0.baseAddress!, 1) }
+            let high: [Double] = StreamingExtractor.highPass(fs: sampleRate, cutoff: 2500)
+            highSetup = high.withUnsafeBufferPointer { vDSP_biquad_CreateSetup($0.baseAddress!, 1) }
             let k: [Double] = KWeightingFilter.coefficients(sampleRate: sampleRate)
             kSetup = k.withUnsafeBufferPointer { vDSP_biquad_CreateSetup($0.baseAddress!, 2) }
         }
 
         deinit {
             if let s = lowSetup { vDSP_biquad_DestroySetup(s) }
+            if let s = highSetup { vDSP_biquad_DestroySetup(s) }
             if let s = kSetup { vDSP_biquad_DestroySetup(s) }
         }
 
@@ -104,6 +109,19 @@ enum AudioAnalyzer {
             let a0: Double = 1 + alpha
             let b0: Double = (1 - cosw) / 2 / a0
             let b1: Double = (1 - cosw) / a0
+            let b2: Double = b0
+            let a1: Double = -2 * cosw / a0
+            let a2: Double = (1 - alpha) / a0
+            return [b0, b1, b2, a1, a2]
+        }
+
+        static func highPass(fs: Double, cutoff: Double) -> [Double] {
+            let w0: Double = 2 * Double.pi * min(cutoff, fs * 0.45) / fs
+            let alpha: Double = sin(w0) / (2 * 0.7071)
+            let cosw: Double = cos(w0)
+            let a0: Double = 1 + alpha
+            let b0: Double = (1 + cosw) / 2 / a0
+            let b1: Double = -(1 + cosw) / a0
             let b2: Double = b0
             let a1: Double = -2 * cosw / a0
             let a2: Double = (1 - alpha) / a0
@@ -136,12 +154,18 @@ enum AudioAnalyzer {
             let count: Int = (pending.count / hop) * hop
             if count == 0 { return }
             var low: [Float] = Array(repeating: 0, count: count)
+            var high: [Float] = Array(repeating: 0, count: count)
             var weighted: [Float] = Array(repeating: 0, count: count)
             pending.withUnsafeBufferPointer { src in
                 guard let s = src.baseAddress else { return }
                 low.withUnsafeMutableBufferPointer { out in
                     if let setup = lowSetup, let o = out.baseAddress {
                         vDSP_biquad(setup, &lowDelay, s, 1, o, 1, vDSP_Length(count))
+                    }
+                }
+                high.withUnsafeMutableBufferPointer { out in
+                    if let setup = highSetup, let o = out.baseAddress {
+                        vDSP_biquad(setup, &highDelay, s, 1, o, 1, vDSP_Length(count))
                     }
                 }
                 weighted.withUnsafeMutableBufferPointer { out in
@@ -156,9 +180,13 @@ enum AudioAnalyzer {
                     vDSP_rmsqv(s + frame, 1, &rms, vDSP_Length(hop))
                     vDSP_maxmgv(s + frame, 1, &peak, vDSP_Length(hop))
                     var lowRMS: Float = 0
+                    var highRMS: Float = 0
                     var kPower: Float = 0
                     low.withUnsafeBufferPointer { l in
                         if let base = l.baseAddress { vDSP_rmsqv(base + frame, 1, &lowRMS, vDSP_Length(hop)) }
+                    }
+                    high.withUnsafeBufferPointer { h in
+                        if let base = h.baseAddress { vDSP_rmsqv(base + frame, 1, &highRMS, vDSP_Length(hop)) }
                     }
                     weighted.withUnsafeBufferPointer { k in
                         if let base = k.baseAddress { vDSP_measqv(base + frame, 1, &kPower, vDSP_Length(hop)) }
@@ -166,6 +194,7 @@ enum AudioAnalyzer {
                     features.rms.append(rms)
                     features.peak.append(peak)
                     features.low.append(lowRMS)
+                    features.high.append(highRMS)
                     features.kWeighted.append(kPower)
                     frame += hop
                 }
@@ -203,7 +232,7 @@ final class ThumbnailStore: @unchecked Sendable {
     }
 
     /// まだ無ければ作る。終わったら completion をメインスレッドで呼ぶ。
-    func load(_ asset: MediaAsset, height: CGFloat = 72, completion: @escaping @Sendable () -> Void) {
+    func load(_ asset: MediaAsset, height: CGFloat = 72, completion: @escaping @MainActor () -> Void) {
         if strips.get()[asset.id] != nil { return }
         let started: Bool = loading.update { set -> Bool in
             if set.contains(asset.id) { return false }

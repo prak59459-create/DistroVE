@@ -11,6 +11,8 @@ struct AudioFeatures: Sendable {
     var rms: [Float]
     /// 低音（約 150Hz 以下）の RMS。キックの検出に使う
     var low: [Float]
+    /// 高音（約 2.5kHz 以上）の RMS。ハイハット・スネア・クラップの検出に使う
+    var high: [Float]
     /// 最大振幅（波形表示用）
     var peak: [Float]
     /// K 特性をかけた二乗平均（ラウドネス計算用。無ければ rms で代用）
@@ -22,6 +24,7 @@ struct AudioFeatures: Sendable {
         self.channels = channels
         self.rms = []
         self.low = []
+        self.high = []
         self.peak = []
         self.kWeighted = []
     }
@@ -60,14 +63,16 @@ struct AudioFeatures: Sendable {
     func serialized() -> Data {
         var data = Data()
         Self.append(&data, Self.magic)
-        Self.append(&data, UInt32(1))
+        Self.append(&data, UInt32(2))
         Self.append(&data, frameRate)
         Self.append(&data, sampleRate)
         Self.append(&data, UInt32(channels))
         Self.append(&data, UInt32(rms.count))
+        Self.append(&data, UInt32(high.count))
         Self.append(&data, UInt32(kWeighted.count))
         Self.appendFloats(&data, rms)
         Self.appendFloats(&data, low)
+        Self.appendFloats(&data, high)
         Self.appendFloats(&data, peak)
         Self.appendFloats(&data, kWeighted)
         return data
@@ -76,18 +81,21 @@ struct AudioFeatures: Sendable {
     init?(data: Data) {
         var offset: Int = 0
         guard let magic: UInt32 = Self.read(data, &offset), magic == Self.magic else { return nil }
-        guard let _: UInt32 = Self.read(data, &offset) else { return nil }
+        // 形式 1（高音なし）のキャッシュは作り直す
+        guard let version: UInt32 = Self.read(data, &offset), version == 2 else { return nil }
         guard let fr: Double = Self.read(data, &offset), let sr: Double = Self.read(data, &offset) else { return nil }
         guard let ch: UInt32 = Self.read(data, &offset), let count: UInt32 = Self.read(data, &offset) else { return nil }
-        guard let kCount: UInt32 = Self.read(data, &offset) else { return nil }
+        guard let hCount: UInt32 = Self.read(data, &offset), let kCount: UInt32 = Self.read(data, &offset) else { return nil }
         let n: Int = Int(count)
         guard let r = Self.readFloats(data, &offset, n), let l = Self.readFloats(data, &offset, n) else { return nil }
+        guard let h = Self.readFloats(data, &offset, Int(hCount)) else { return nil }
         guard let p = Self.readFloats(data, &offset, n), let k = Self.readFloats(data, &offset, Int(kCount)) else { return nil }
         frameRate = fr
         sampleRate = sr
         channels = Int(ch)
         rms = r
         low = l
+        high = h
         peak = p
         kWeighted = k
     }
@@ -133,12 +141,15 @@ enum AudioFeatureExtractor {
         // 割り切れないサンプリング周波数（11025Hz など）でも時刻がずれないよう、実際のフレームレートを記録する
         var features = AudioFeatures(frameRate: sampleRate / Double(hop), sampleRate: sampleRate, channels: 1)
         let lowCoefficient: Float = Float(1 - exp(-2 * Double.pi * 150 / sampleRate))
+        let highCoefficient: Float = Float(1 - exp(-2 * Double.pi * 2500 / sampleRate))
         var lowState: Float = 0
+        var highState: Float = 0
         var kFilter = KWeightingFilter(sampleRate: sampleRate)
         var index: Int = 0
         while index + hop <= samples.count {
             var sum: Double = 0
             var lowSum: Double = 0
+            var highSum: Double = 0
             var kSum: Double = 0
             var maxValue: Float = 0
             for i in index..<(index + hop) {
@@ -146,6 +157,9 @@ enum AudioFeatureExtractor {
                 sum += Double(s * s)
                 lowState += lowCoefficient * (s - lowState)
                 lowSum += Double(lowState * lowState)
+                highState += highCoefficient * (s - highState)
+                let h: Float = s - highState
+                highSum += Double(h * h)
                 let k: Double = kFilter.process(Double(s))
                 kSum += k * k
                 let a: Float = abs(s)
@@ -153,6 +167,7 @@ enum AudioFeatureExtractor {
             }
             features.rms.append(Float((sum / Double(hop)).squareRoot()))
             features.low.append(Float((lowSum / Double(hop)).squareRoot()))
+            features.high.append(Float((highSum / Double(hop)).squareRoot()))
             features.kWeighted.append(Float(kSum / Double(hop)))
             features.peak.append(maxValue)
             index += hop

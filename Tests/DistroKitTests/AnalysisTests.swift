@@ -78,6 +78,7 @@ final class AnalysisTests: XCTestCase {
         var f = AudioFeatures(frameRate: 100, sampleRate: 44_100, channels: 2)
         f.rms = [0.1, 0.2, 0.3]
         f.low = [0.01, 0.02, 0.03]
+        f.high = [0.04, 0.05, 0.06]
         f.peak = [0.5, 0.6, 0.7]
         f.kWeighted = [0.001, 0.002, 0.003]
         let decoded = AudioFeatures(data: f.serialized())
@@ -85,6 +86,7 @@ final class AnalysisTests: XCTestCase {
         XCTAssertEqual(decoded?.rms, f.rms)
         XCTAssertEqual(decoded?.peak, f.peak)
         XCTAssertEqual(decoded?.kWeighted, f.kWeighted)
+        XCTAssertEqual(decoded?.high, f.high)
         XCTAssertEqual(decoded?.channels, 2)
         XCTAssertNil(AudioFeatures(data: Data([1, 2, 3])))
         let wave = f.waveform(from: 0, to: 0.03, count: 3)

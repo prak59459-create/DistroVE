@@ -41,25 +41,35 @@ enum BeatDetector {
         return BeatAnalysis(bpm: bpm, beats: beats, downbeatOffset: downbeat, confidence: confidence)
     }
 
-    /// 低音と全体の音量の立ち上がりを合わせたオンセット強度（平均 0・標準偏差 1 に正規化）。
+    /// オンセット強度。全体・低音・高音の帯域ごとに音量の立ち上がりを求め、それぞれ標準偏差 1 にそろえてから足す。
+    /// 帯域を分けると、持続する 808 ベースに隠れたハイハットやクラップの拍も拾える。
     static func onsetStrength(_ f: AudioFeatures) -> [Double] {
         let n: Int = f.rms.count
         if n < 3 { return [] }
+        var total: [Double] = Array(repeating: 0, count: n)
+        let bands: [[Float]] = [f.rms, f.low, f.high]
+        for band in bands where band.count == n {
+            let o: [Double] = bandOnset(band, frameRate: f.frameRate)
+            for i in 0..<n {
+                total[i] += o[i]
+            }
+        }
+        return normalized(total)
+    }
+
+    /// 1 つの帯域の立ち上がり（対数の差分の正の部分から、約 0.5 秒の移動平均を引いたもの）。
+    static func bandOnset(_ band: [Float], frameRate: Double) -> [Double] {
+        let n: Int = band.count
         let eps: Double = 1e-5
-        var full: [Double] = Array(repeating: 0, count: n)
-        var low: [Double] = Array(repeating: 0, count: n)
+        var level: [Double] = Array(repeating: 0, count: n)
         for i in 0..<n {
-            full[i] = log(eps + Double(f.rms[i]))
-            low[i] = log(eps + Double(i < f.low.count ? f.low[i] : 0))
+            level[i] = log(eps + Double(band[i]))
         }
         var onset: [Double] = Array(repeating: 0, count: n)
         for i in 1..<n {
-            let a: Double = max(0, full[i] - full[i - 1])
-            let b: Double = max(0, low[i] - low[i - 1])
-            onset[i] = a + 1.5 * b
+            onset[i] = max(0, level[i] - level[i - 1])
         }
-        // ゆっくりした音量変化を取り除く（約 0.5 秒の移動平均を引く）
-        let window: Int = max(3, Int(f.frameRate * 0.5))
+        let window: Int = max(3, Int(frameRate * 0.5))
         var prefix: [Double] = Array(repeating: 0, count: n + 1)
         for i in 0..<n {
             prefix[i + 1] = prefix[i] + onset[i]
@@ -71,40 +81,77 @@ enum BeatDetector {
             let mean: Double = (prefix[hi] - prefix[lo]) / Double(hi - lo)
             result[i] = max(0, onset[i] - mean)
         }
+        return normalized(result)
+    }
+
+    static func normalized(_ values: [Double]) -> [Double] {
+        let n: Int = values.count
+        if n == 0 { return values }
         var sum: Double = 0
         var sumSq: Double = 0
-        for v in result {
+        for v in values {
             sum += v
             sumSq += v * v
         }
         let mean: Double = sum / Double(n)
-        let variance: Double = max(1e-12, sumSq / Double(n) - mean * mean)
+        let variance: Double = sumSq / Double(n) - mean * mean
+        if variance <= 1e-12 { return values }
         let sd: Double = variance.squareRoot()
+        var result: [Double] = values
         for i in 0..<n {
-            result[i] = result[i] / sd
+            result[i] = values[i] / sd
         }
         return result
     }
 
-    /// 自己相関でビートの周期（フレーム数、小数あり）を推定する。120BPM 付近を少し優先する。
+    /// 自己相関でビートの周期（フレーム数、小数あり）を推定する。
+    /// シンコペーション（phonk のキックなど）の間隔に引っ張られないよう、周期の 2 倍（半小節）と 4 倍（1 小節）の
+    /// 自己相関も足し合わせて評価する。120BPM 付近を少し優先する。
     static func estimatePeriod(_ onset: [Double], frameRate fr: Double, minBPM: Double, maxBPM: Double) -> Double? {
         let minLag: Int = max(2, Int((60 * fr / maxBPM).rounded(.down)))
         let maxLag: Int = Int((60 * fr / minBPM).rounded(.up))
-        let n: Int = onset.count
+        // テンポはふつう一定なので、長い曲は最初の 90 秒で推定する（計算量を抑える）
+        let n: Int = min(onset.count, Int(fr * 90))
         if maxLag + 2 >= n { return nil }
+        let maxMultiple: Int = min(4, max(1, (n - 2) / max(1, maxLag + 1)))
+        let lagLimit: Int = (maxLag + 1) * maxMultiple
+        var autocorrelation: [Double] = Array(repeating: 0, count: lagLimit + 1)
+        onset.withUnsafeBufferPointer { o in
+            for lag in minLag...lagLimit where lag < n {
+                var acc: Double = 0
+                var i: Int = lag
+                while i < n {
+                    acc += o[i] * o[i - lag]
+                    i += 1
+                }
+                autocorrelation[lag] = acc / Double(n - lag)
+            }
+        }
         let preferredLag: Double = 60 * fr / 120
         var scores: [Double] = Array(repeating: 0, count: maxLag + 2)
         for lag in minLag...(maxLag + 1) {
-            var acc: Double = 0
-            var i: Int = lag
-            while i < n {
-                acc += onset[i] * onset[i - lag]
-                i += 1
+            var acc: Double = autocorrelation[lag]
+            var weight: Double = 1
+            var multiple: Int = 2
+            while multiple <= 4 && lag * multiple <= lagLimit {
+                if multiple != 3 {
+                    // 整数の周期の倍数は本当の山から少しずれるので、前後 multiple/2 フレームの最大値を取る
+                    let center: Int = lag * multiple
+                    let spread: Int = multiple / 2
+                    var best: Double = 0
+                    var k: Int = max(minLag, center - spread)
+                    while k <= min(lagLimit, center + spread) {
+                        if autocorrelation[k] > best { best = autocorrelation[k] }
+                        k += 1
+                    }
+                    acc += best
+                    weight += 1
+                }
+                multiple += 1
             }
-            acc /= Double(n - lag)
             let octaves: Double = log2(Double(lag) / preferredLag)
             let prior: Double = exp(-0.5 * (octaves / 1.0) * (octaves / 1.0))
-            scores[lag] = acc * prior
+            scores[lag] = acc / weight * prior
         }
         var bestLag: Int = minLag
         var best: Double = -Double.infinity
