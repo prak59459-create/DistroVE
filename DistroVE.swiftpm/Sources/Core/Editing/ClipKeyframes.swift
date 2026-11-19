@@ -19,6 +19,10 @@ extension Clip {
             mask = m
         }
         audio.volume = audio.volume.shifted(by: delta)
+        if var content = object3D {
+            content.positionZ = content.positionZ.shifted(by: delta)
+            object3D = content
+        }
     }
 
     /// クリップ内の時刻 t で分けたときの、前半・後半のキーフレームを作る。
@@ -64,6 +68,11 @@ extension Clip {
         let vol: (Param, Param) = audio.volume.split(at: t)
         left.audio.volume = vol.0
         right.audio.volume = vol.1
+        if let content = object3D {
+            let z: (Param, Param) = content.positionZ.split(at: t)
+            left.object3D?.positionZ = z.0
+            right.object3D?.positionZ = z.1
+        }
         return (left, right)
     }
 
@@ -78,6 +87,9 @@ extension Clip {
         transform.rotationX = Clip.clampParam(transform.rotationX, limit)
         transform.rotationY = Clip.clampParam(transform.rotationY, limit)
         audio.volume = Clip.clampParam(audio.volume, limit)
+        if let content = object3D {
+            object3D?.positionZ = Clip.clampParam(content.positionZ, limit)
+        }
     }
 
     static func clampParam(_ param: Param, _ limit: Time) -> Param {

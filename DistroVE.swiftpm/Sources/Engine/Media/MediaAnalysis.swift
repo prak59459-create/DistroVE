@@ -269,7 +269,7 @@ final class ThumbnailStore: @unchecked Sendable {
             ]
             guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
             return Strip(interval: 1_000_000, images: [image])
-        case .audio:
+        case .audio, .model3D:
             return nil
         case .video:
             let avAsset = AVURLAsset(url: url)

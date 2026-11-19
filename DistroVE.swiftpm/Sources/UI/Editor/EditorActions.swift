@@ -145,9 +145,9 @@ extension EditorController {
                     continue
                 }
                 let mainEmpty: Bool = p.mainTrackIndex.map { p.tracks[$0].clips.isEmpty } ?? true
-                if asOverlay && !mainEmpty {
+                if (asOverlay || asset.kind == .model3D) && !mainEmpty {
                     var clip: Clip = p.makeClip(for: asset)
-                    clip.transform.scale = Param(0.5)
+                    if asset.kind != .model3D { clip.transform.scale = Param(0.5) }
                     p.placeOverlay(clip, at: cursor)
                     cursor = cursor + clip.duration
                 } else {
@@ -243,6 +243,38 @@ extension EditorController {
         let start: Time = currentTime
         apply("ステッカーを追加") { p in p.placeOverlay(clip, at: start) }
         select(clip.id)
+    }
+
+    // MARK: 3D（Q50）
+
+    func addObject3D(_ kind: Object3DKind) {
+        var clip = Clip(kind: .object3D, name: kind.label, start: currentTime, duration: Time(seconds: 5))
+        clip.object3D = Object3DContent(kind: kind, text: "3D")
+        let start: Time = currentTime
+        apply("3D を追加") { p in p.placeOverlay(clip, at: start) }
+        select(clip.id)
+        panel = .object3D
+    }
+
+    /// 3D モデルを素材として取り込み、重ねて置く。
+    func importModel(_ url: URL) {
+        runJob("3D モデルの読み込み") { controller, _ in
+            let asset: MediaAsset = try await MediaStore.shared.importFile(at: url, copy: true)
+            controller.addAssets([asset], asOverlay: true, autoProxy: false)
+            controller.panel = .object3D
+        }
+    }
+
+    /// 選んでいる 3D クリップの中身を変える。
+    func update3D(_ name: String, coalesce: String? = nil, _ change: @escaping (inout Object3DContent) -> Void) {
+        updateSelected(name, coalesce: coalesce) { clip in
+            guard var content = clip.object3D else { return }
+            change(&content)
+            clip.object3D = content
+            if content.kind == .text {
+                clip.name = content.text.components(separatedBy: "\n").first ?? clip.name
+            }
+        }
     }
 
     func addShape(_ kind: ShapeKind) {

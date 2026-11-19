@@ -33,6 +33,13 @@ struct ClipParamRow: View {
 struct TransformPanel: View {
     @ObservedObject var controller: EditorController
 
+    /// 3D のクリップは一回転まで、ほかは傾きだけ。
+    static func tiltRange(_ clip: Clip) -> ClosedRange<Double> {
+        let full: ClosedRange<Double> = -360...360
+        let tilt: ClosedRange<Double> = -80...80
+        return clip.kind == .object3D ? full : tilt
+    }
+
     var body: some View {
         if let clip = controller.selectedClip {
             VStack(alignment: .leading, spacing: 6) {
@@ -47,8 +54,10 @@ struct TransformPanel: View {
                 ClipParamRow(controller: controller, clip: clip, label: "回転", path: \.transform.rotation, range: -360...360, defaultValue: 0, format: "%.0f°")
                 ClipParamRow(controller: controller, clip: clip, label: "不透明度", path: \.transform.opacity, range: 0...1, defaultValue: 1)
                 PanelTitle(text: "3D")
-                ClipParamRow(controller: controller, clip: clip, label: "縦の傾き", path: \.transform.rotationX, range: -80...80, defaultValue: 0, format: "%.0f°")
-                ClipParamRow(controller: controller, clip: clip, label: "横の傾き", path: \.transform.rotationY, range: -80...80, defaultValue: 0, format: "%.0f°")
+                ClipParamRow(controller: controller, clip: clip, label: clip.kind == .object3D ? "X 軸の回転" : "縦の傾き", path: \.transform.rotationX,
+                             range: TransformPanel.tiltRange(clip), defaultValue: 0, format: "%.0f°")
+                ClipParamRow(controller: controller, clip: clip, label: clip.kind == .object3D ? "Y 軸の回転" : "横の傾き", path: \.transform.rotationY,
+                             range: TransformPanel.tiltRange(clip), defaultValue: 0, format: "%.0f°")
                 PanelTitle(text: "切り抜き・反転")
                 CropRows(controller: controller, clip: clip)
                 HStack {

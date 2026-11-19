@@ -42,6 +42,7 @@ struct TrackPalette {
             case .shape: return UIColor(hex: 0xF0E442)
             case .solid: return UIColor(hex: 0x7F7F7F)
             case .adjustment: return UIColor(hex: 0xBBBBBB)
+            case .object3D: return UIColor(hex: 0xD55E00)
             }
         }
         switch kind {
@@ -53,6 +54,7 @@ struct TrackPalette {
         case .shape: return UIColor(hex: 0x06A6C4)
         case .solid: return UIColor(hex: 0x6B7280)
         case .adjustment: return UIColor(hex: 0x9CA3AF)
+        case .object3D: return UIColor(hex: 0xF97316)
         }
     }
 

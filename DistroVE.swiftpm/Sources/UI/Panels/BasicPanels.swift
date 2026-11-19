@@ -135,6 +135,7 @@ struct ProjectMediaList: View {
         case .audio: return "music.note"
         case .image: return "photo"
         case .gif: return "photo.stack"
+        case .model3D: return "cube"
         }
     }
 

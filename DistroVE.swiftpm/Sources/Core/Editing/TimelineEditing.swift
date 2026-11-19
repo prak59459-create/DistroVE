@@ -86,6 +86,11 @@ extension Project {
             var clip = Clip(kind: .gif, name: asset.name, start: .zero, duration: length)
             clip.mediaID = asset.id
             return clip
+        case .model3D:
+            var clip = Clip(kind: .object3D, name: asset.name, start: .zero, duration: Project.defaultStillDuration)
+            clip.mediaID = asset.id
+            clip.object3D = Object3DContent(kind: .model)
+            return clip
         }
     }
 
@@ -525,6 +530,9 @@ extension Project {
         case .image: clip.kind = .image
         case .gif: clip.kind = .gif
         case .audio: clip.kind = .audio
+        case .model3D:
+            clip.kind = .object3D
+            if clip.object3D?.kind != .model { clip.object3D = Object3DContent(kind: .model) }
         }
         if asset.hasFiniteDuration {
             let available: Time = SpeedMap(settings: clip.speed).timelineDuration(forSource: asset.duration)

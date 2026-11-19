@@ -46,6 +46,7 @@ struct EditorToolbar: View {
         tool("オーディオ", "music.note", panel: .audioLibrary)
         tool("テキスト", "textformat", panel: .text)
         tool("ステッカー", "face.smiling", panel: .stickers)
+        tool("3D", "cube", panel: .object3D)
         tool("字幕", "captions.bubble", panel: .subtitles)
         tool("AI", "wand.and.stars", panel: .ai)
         tool("分割", "scissors", action: { controller.splitAtPlayhead() })
@@ -85,6 +86,12 @@ struct EditorToolbar: View {
         case .shape:
             tool("変形", "arrow.up.left.and.arrow.down.right", panel: .transform)
             tool("アニメ", "sparkles", panel: .animation)
+            tool("ブレンド", "square.stack.3d.down.right", panel: .blend)
+        case .object3D:
+            tool("3D", "cube", panel: .object3D)
+            tool("変形", "arrow.up.left.and.arrow.down.right", panel: .transform)
+            tool("アニメ", "sparkles", panel: .animation)
+            tool("エフェクト", "wand.and.rays", panel: .effects)
             tool("ブレンド", "square.stack.3d.down.right", panel: .blend)
         case .audio:
             tool("音量", "speaker.wave.2", panel: .volume)

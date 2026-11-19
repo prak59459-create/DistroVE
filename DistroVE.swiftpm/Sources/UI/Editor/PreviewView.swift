@@ -161,6 +161,11 @@ struct SelectionOutline: View {
         case .shape:
             let h: CGFloat = CGFloat(clip.shape?.size ?? 0.3) * min(canvas.width, canvas.height)
             return CGSize(width: h * CGFloat(clip.shape?.aspect ?? 1), height: h)
+        case .object3D:
+            let h: CGFloat = CGFloat(clip.object3D?.size ?? 0.3) * canvas.height
+            let letters: CGFloat = CGFloat(min(10, max(1, clip.object3D?.text.count ?? 1)))
+            let aspect: CGFloat = clip.object3D?.kind == .text ? letters * 0.6 : 1
+            return CGSize(width: min(canvas.width, h * aspect), height: h)
         default:
             return canvas.size
         }

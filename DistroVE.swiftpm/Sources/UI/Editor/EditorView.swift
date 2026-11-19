@@ -203,6 +203,7 @@ enum PanelRouter {
         case .keyframes: return AnyView(KeyframesPanel(controller: controller))
         case .reorder: return AnyView(ReorderPanel(controller: controller))
         case .drawing: return AnyView(DrawingPanel(controller: controller))
+        case .object3D: return AnyView(Object3DPanel(controller: controller))
         }
     }
 }

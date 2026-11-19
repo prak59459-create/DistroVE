@@ -36,6 +36,9 @@ final class FrameRenderer: @unchecked Sendable {
         colors.clear()
         stills.clear()
         texts.clear()
+        #if canImport(MetalKit)
+        Renderer3D.shared?.clearCaches()
+        #endif
     }
 
     // MARK: フレーム
@@ -194,6 +197,9 @@ final class FrameRenderer: @unchecked Sendable {
             let color: RGBA = clip.solidColor ?? .black
             let image: CIImage = CIImage(color: color.ciColor).cropped(to: canvas)
             return finish(clip, content: image, natural: true, local: local, timeline: t, context: context)
+        case .object3D:
+            guard let content = clip.object3D else { return nil }
+            return object3DLayer(clip, content: content, local: local, timeline: t, context: context)
         case .audio, .adjustment:
             return nil
         case .video, .image, .gif:
@@ -427,16 +433,59 @@ final class FrameRenderer: @unchecked Sendable {
         }
         image = image.cropped(to: canvas)
         if image.extent.isEmpty { return nil }
+        return effectsAndOpacity(clip, image: image, local: local, timeline: timeline, context: context,
+                                 opacity: tr.opacity.value(at: local) * anim.opacity)
+    }
+
+    /// エフェクトと不透明度（どのクリップでも最後にかける）。
+    private func effectsAndOpacity(_ clip: Clip, image input: CIImage, local: Time, timeline: Time,
+                                   context: LayerContext, opacity: Double) -> CIImage? {
+        var image: CIImage = input
         if !clip.effects.isEmpty {
-            image = EffectRenderer.apply(clip.effects, to: image, canvas: canvas, local: local, timeline: timeline,
+            image = EffectRenderer.apply(clip.effects, to: image, canvas: context.canvas, local: local, timeline: timeline,
                                          beats: context.beats, unit: context.unit, clipStart: clip.start)
         }
-        let alpha: Double = Num.clamp(tr.opacity.value(at: local) * anim.opacity, 0, 1)
+        let alpha: Double = Num.clamp(opacity, 0, 1)
         if alpha < 0.999 {
             if alpha <= 0.001 { return nil }
             image = image.applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(alpha))])
         }
         return image
+    }
+
+    // MARK: 3D（Q50）
+
+    /// 3D はキャンバスと同じ大きさで描く。位置・大きさ・回転（X・Y・Z）はキーフレーム、出入りの動き、ビートの動き、自動の動きを足す。
+    private func object3DLayer(_ clip: Clip, content: Object3DContent, local: Time, timeline: Time, context: LayerContext) -> CIImage? {
+        #if canImport(MetalKit)
+        guard let renderer = Renderer3D.shared else { return nil }
+        let anim: AnimationState = FrameRenderer.animation(clip, local: local)
+        let motion: EffectRenderer.MotionOffset = EffectRenderer.motion(clip.effects, local: local, timeline: timeline, beats: context.beats)
+        let tr: Transform = clip.transform
+        let auto: (x: Double, y: Double, z: Double, lift: Double) = content.motionOffset(at: local.seconds)
+        var pose = Renderer3D.Pose()
+        pose.positionX = tr.positionX.value(at: local) + anim.dx + motion.dx
+        pose.positionY = tr.positionY.value(at: local) + anim.dy + motion.dy - auto.lift * content.size
+        pose.positionZ = content.positionZ.value(at: local)
+        pose.scale = tr.scale.value(at: local) * anim.scale * motion.scale
+        pose.rotationX = tr.rotationX.value(at: local) + auto.x
+        pose.rotationY = tr.rotationY.value(at: local) + auto.y
+        pose.rotationZ = tr.rotation.value(at: local) + anim.rotation + motion.rotation + auto.z
+        var model: Renderer3D.ModelSource?
+        if content.kind == .model {
+            guard let asset = context.project.asset(clip.mediaID), let url = context.graph.media.url(for: asset) else { return nil }
+            model = Renderer3D.ModelSource(key: asset.id.uuidString, url: url)
+        }
+        guard var image = renderer.render(content, pose: pose, size: context.canvas.size, model: model) else { return nil }
+        image = FrameRenderer.normalized(image)
+        if anim.blur > 0.1 {
+            image = image.applyingGaussianBlur(sigma: anim.blur * Double(context.unit)).cropped(to: context.canvas)
+        }
+        return effectsAndOpacity(clip, image: image, local: local, timeline: timeline, context: context,
+                                 opacity: tr.opacity.value(at: local) * anim.opacity)
+        #else
+        return nil
+        #endif
     }
 
     // MARK: 調整クリップ・字幕

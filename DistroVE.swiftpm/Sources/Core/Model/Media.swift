@@ -6,6 +6,8 @@ enum MediaKind: String, Codable, Sendable {
     case audio
     case image
     case gif
+    /// 3D モデル（USDZ・OBJ・STL・PLY など。Q50）
+    case model3D
 }
 
 /// 素材ファイルの持ち方（Q78: 参照かコピーかを選べる）。
@@ -57,7 +59,7 @@ struct MediaAsset: Identifiable, Hashable, Codable, Sendable {
         self.width = 0
         self.height = 0
         self.frameRate = 30
-        self.hasVideo = kind == .video || kind == .image || kind == .gif
+        self.hasVideo = kind == .video || kind == .image || kind == .gif || kind == .model3D
         self.hasAudio = kind == .audio
         self.codec = ""
         self.fileSize = 0
@@ -68,7 +70,7 @@ struct MediaAsset: Identifiable, Hashable, Codable, Sendable {
     }
 
     var isVisual: Bool {
-        return kind == .video || kind == .image || kind == .gif
+        return kind == .video || kind == .image || kind == .gif || kind == .model3D
     }
 
     /// 長さに上限があるか（静止画は自由に伸ばせる）。
@@ -94,6 +96,7 @@ enum MediaFormatSupport {
     static let audioExtensions: Set<String> = ["mp3", "wav", "m4a", "aac", "aif", "aiff", "caf", "flac"]
     static let imageExtensions: Set<String> = ["jpg", "jpeg", "png", "heic", "heif", "webp", "tif", "tiff", "bmp"]
     static let gifExtensions: Set<String> = ["gif"]
+    static let modelExtensions: Set<String> = ["usdz", "usd", "usda", "usdc", "obj", "stl", "ply", "abc"]
     static let unsupportedExtensions: Set<String> = ["mkv", "webm", "avi", "wmv", "flv"]
 
     static func kind(forExtension ext: String) -> MediaKind? {
@@ -102,6 +105,7 @@ enum MediaFormatSupport {
         if audioExtensions.contains(lower) { return .audio }
         if gifExtensions.contains(lower) { return .gif }
         if imageExtensions.contains(lower) { return .image }
+        if modelExtensions.contains(lower) { return .model3D }
         return nil
     }
 

@@ -12,6 +12,8 @@ enum ClipKind: String, Codable, CaseIterable, Sendable {
     case solid
     /// 下にある映像全体（またはマスク範囲）に色やエフェクトをかける調整クリップ。モザイク枠もこれで作る。
     case adjustment
+    /// 立体文字・3D モデル・基本の立体（Q50）
+    case object3D
 
     var label: String {
         switch self {
@@ -24,6 +26,7 @@ enum ClipKind: String, Codable, CaseIterable, Sendable {
         case .shape: return "図形"
         case .solid: return "単色"
         case .adjustment: return "調整"
+        case .object3D: return "3D"
         }
     }
 
@@ -241,6 +244,7 @@ struct Clip: Identifiable, Codable, Sendable {
     var text: TextContent?
     var shape: ShapeContent?
     var solidColor: RGBA?
+    var object3D: Object3DContent?
 
     init(kind: ClipKind, name: String, start: Time, duration: Time) {
         self.id = UUID()
@@ -269,12 +273,13 @@ struct Clip: Identifiable, Codable, Sendable {
         self.text = nil
         self.shape = nil
         self.solidColor = nil
+        self.object3D = nil
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, kind, mediaID, name, start, duration, sourceStart, speed, transform, fitMode
         case color, look, curves, effects, mask, chromaKey, blend, removeBackground, stabilization
-        case transitionIn, animationIn, animationOut, audio, text, shape, solidColor
+        case transitionIn, animationIn, animationOut, audio, text, shape, solidColor, object3D
     }
 
     init(from decoder: Decoder) throws {
@@ -305,6 +310,7 @@ struct Clip: Identifiable, Codable, Sendable {
         text = c.optional(.text, TextContent.self)
         shape = c.optional(.shape, ShapeContent.self)
         solidColor = c.optional(.solidColor, RGBA.self)
+        object3D = c.optional(.object3D, Object3DContent.self)
     }
 
     var end: Time { return start + duration }

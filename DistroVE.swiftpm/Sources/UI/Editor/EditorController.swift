@@ -32,6 +32,7 @@ enum EditorPanel: String, Identifiable {
     case keyframes
     case reorder
     case drawing
+    case object3D
 
     var id: String { return rawValue }
 
@@ -41,6 +42,7 @@ enum EditorPanel: String, Identifiable {
         case .audioLibrary: return "BGM・効果音"
         case .text: return "テキスト"
         case .stickers: return "ステッカー・図形"
+        case .object3D: return "3D"
         case .effects: return "エフェクト"
         case .filters: return "フィルター"
         case .adjust: return "色の調整"

@@ -65,7 +65,7 @@ struct CanvasSettings: Hashable, Codable, Sendable {
 
 /// プロジェクト（.disve ファイルの中身）。
 struct Project: Identifiable, Codable, Sendable {
-    static let currentFormatVersion: Int = 1
+    static let currentFormatVersion: Int = 2
     static let fileExtension: String = "disve"
 
     var formatVersion: Int

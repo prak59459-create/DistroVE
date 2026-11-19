@@ -117,6 +117,15 @@ final class MediaStore: @unchecked Sendable {
     /// 長さ・大きさ・音声の有無などを調べる。
     func probe(_ asset: inout MediaAsset, url: URL) async throws {
         switch asset.kind {
+        case .model3D:
+            #if canImport(MetalKit)
+            let model: Geometry3D.LoadedModel = try Geometry3D.loadModel(url: url)
+            asset.codec = "\(model.mesh.triangleCount) 面"
+            #endif
+            asset.width = 1024
+            asset.height = 1024
+            asset.hasVideo = true
+            asset.hasAudio = false
         case .image:
             let size: CGSize = MediaStore.imageSize(url)
             asset.width = Int(size.width)
