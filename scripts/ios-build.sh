@@ -9,7 +9,8 @@ cd "$(dirname "$0")/../DistroVE.swiftpm"
 DERIVED="$(mktemp -d)"
 LOG="$(mktemp)"
 SCHEME="Distro VE"
-DEST="generic/platform=iOS Simulator"
+# iPad 実機と同じ arm64 だけのビルド（シミュレーター向けは 2 つの CPU 向けに作るため時間が倍になる）
+DEST="generic/platform=iOS"
 
 build() {
   xcodebuild build -scheme "$SCHEME" -destination "$DEST" -derivedDataPath "$DERIVED" \

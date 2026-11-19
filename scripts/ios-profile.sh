@@ -17,7 +17,8 @@ xcrun --sdk iphonesimulator swiftc -c -wmo -Onone -g0 \
   -o "$WORK/AppModule.o" $(cat "$LIST") > "$WORK/out.log" 2>&1
 status=$?
 end=$(date +%s)
-echo "1 プロセス（whole module）でのコンパイル: $((end - start)) 秒（終了コード $status）"
+elapsed=$((end - start))
+echo "1 プロセス（whole module）でのコンパイル: ${elapsed} 秒（終了コード ${status}）"
 python3 - "$WORK" <<'PY'
 import glob, json, os, re, sys
 work = sys.argv[1]

@@ -24,18 +24,17 @@ struct RGBA: Hashable, Codable, Sendable {
     init?(hex: String) {
         var text: String = hex.trimmingCharacters(in: .whitespaces)
         if text.hasPrefix("#") { text.removeFirst() }
-        guard text.count == 6 || text.count == 8, let value = UInt64(text, radix: 16) else { return nil }
-        if text.count == 6 {
-            r = Double((value >> 16) & 0xFF) / 255
-            g = Double((value >> 8) & 0xFF) / 255
-            b = Double(value & 0xFF) / 255
-            a = 1
-        } else {
-            r = Double((value >> 24) & 0xFF) / 255
-            g = Double((value >> 16) & 0xFF) / 255
-            b = Double((value >> 8) & 0xFF) / 255
-            a = Double(value & 0xFF) / 255
-        }
+        guard text.count == 6 || text.count == 8, let parsed = UInt64(text, radix: 16) else { return nil }
+        let value: UInt64 = text.count == 6 ? (parsed << 8) | 0xFF : parsed
+        r = RGBA.channel(value, shift: 24)
+        g = RGBA.channel(value, shift: 16)
+        b = RGBA.channel(value, shift: 8)
+        a = RGBA.channel(value, shift: 0)
+    }
+
+    private static func channel(_ value: UInt64, shift: UInt64) -> Double {
+        let byte: UInt64 = (value >> shift) & 0xFF
+        return Double(byte) / 255.0
     }
 
     var hex: String {

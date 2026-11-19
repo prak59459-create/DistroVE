@@ -1,8 +1,9 @@
 name: CI
 
+# プルリクエストと main への push で走らせる（同じ変更で 2 回走らないように、ほかのブランチの push では走らせない）
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 

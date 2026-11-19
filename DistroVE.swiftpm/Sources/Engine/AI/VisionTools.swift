@@ -157,7 +157,9 @@ enum VisionTools {
                 for i in 0..<min(prev.count, pixels.count) {
                     diff += abs(Int(prev[i]) - Int(pixels[i]))
                 }
-                scores.append(min(1, Double(diff) / Double(max(1, pixels.count)) / 64))
+                let count: Int = max(1, pixels.count)
+                let average: Double = Double(diff) / Double(count)
+                scores.append(min(1.0, average / 64.0))
             } else {
                 scores.append(0)
             }
