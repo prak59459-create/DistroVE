@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "minimumAppVersion": "0.1.0",
+  "files": [
+    {
+      "path": "templates/extra-templates.json",
+      "sha256": "07dc98a81fd74fad109d1968f65eeb7f0c65ae8590ae7ea77f8da2af011a2fd1",
+      "size": 906,
+      "kind": "template"
+    },
+    {
+      "path": "luts/warm-film.cube",
+      "sha256": "85069d62380789183e171846692996aa5a1ac8dafd2c19aa068f070926b55bd8",
+      "size": 132684,
+      "kind": "lut"
+    }
+  ]
+}

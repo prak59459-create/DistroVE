@@ -21,6 +21,8 @@ jobs:
         run: swift --version
       - name: クリーンビルドの時間
         run: scripts/measure-core-build.sh
+      - name: 配布データ（content/）の一覧が最新か
+        run: python3 scripts/update-content-manifest.py --check
       - name: テスト
         run: swift test
 
@@ -48,6 +50,9 @@ jobs:
       - name: アプリのビルド（xcodebuild・時間計測）
         if: ${{ !cancelled() }}
         run: scripts/ios-build.sh
+      - name: コンパイル時間の内訳
+        if: ${{ !cancelled() }}
+        run: scripts/ios-profile.sh
       - name: エンジンのテスト（macOS で AVFoundation を実際に動かす）
         if: ${{ !cancelled() }}
         run: swift test

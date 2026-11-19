@@ -13,97 +13,10 @@ struct ExportView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("投稿先のプリセット") {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(ExportPreset.all) { preset in
-                                presetButton(preset)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                    if let preset = ExportPreset.all.first(where: { $0.id == presetID }), let aspect = preset.aspect,
-                       aspect != controller.project.canvas.aspect {
-                        Text("このプリセットは \(aspect.label) 向けです。今の画面は \(controller.project.canvas.aspect.label) なので、上下か左右に余白が付きます（「画面」で縦横比を変えられます）。")
-                            .font(.caption)
-                            .foregroundStyle(Theme.subtext)
-                    }
-                }
-                Section("形式") {
-                    Picker("形式", selection: $settings.format) {
-                        ForEach(ExportFormat.allCases, id: \.self) { f in Text(f.label).tag(f) }
-                    }
-                    .pickerStyle(.segmented)
-                    if settings.format == .mp4 {
-                        Picker("コーデック", selection: $settings.codec) {
-                            ForEach(VideoCodec.allCases, id: \.self) { c in
-                                Text(c.label).tag(c)
-                            }
-                        }
-                        .disabled(!controller.limits.supportsHEVC)
-                        Picker("解像度", selection: $settings.resolution) {
-                            ForEach(ExportResolution.allCases.filter { controller.limits.allows($0) }, id: \.self) { r in
-                                Text(r.label).tag(r)
-                            }
-                        }
-                        Picker("フレームレート", selection: $settings.fps) {
-                            ForEach(ExportSettings.frameRates.filter { controller.limits.allows(fps: $0) }, id: \.self) { f in
-                                Text("\(f)fps").tag(f)
-                            }
-                        }
-                        Toggle("音声を含める", isOn: $settings.includeAudio)
-                        bitrateRow
-                    } else {
-                        Stepper("GIF のコマ数：\(settings.gifFps)fps", value: $settings.gifFps, in: 5...24)
-                        Stepper("GIF の幅：\(settings.gifMaxWidth)px", value: $settings.gifMaxWidth, in: 160...960, step: 80)
-                    }
-                    if controller.project.playRange != nil {
-                        Toggle("範囲指定の部分だけ書き出す", isOn: $useRange)
-                    }
-                }
-                Section {
-                    summary
-                    if let warning = storageWarning {
-                        Label(warning, systemImage: "exclamationmark.triangle")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                    }
-                    if controller.limits.maxResolution != .p2160 || controller.limits.maxFps < 120 {
-                        Text("この端末では \(controller.limits.maxResolution.label)・\(controller.limits.maxFps)fps まで選べます。")
-                            .font(.caption)
-                            .foregroundStyle(Theme.subtext)
-                    }
-                }
-                Section {
-                    if model.isExporting {
-                        ProgressView(value: model.progress) {
-                            Text("書き出し中… \(Int(model.progress * 100))%")
-                        }
-                        Button("中止", role: .destructive) { model.cancel() }
-                    } else if let url = model.output {
-                        Label("書き出しました", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                        Button {
-                            model.saveToPhotos(url, isGIF: settings.format == .gif)
-                        } label: {
-                            Label("写真ライブラリに保存", systemImage: "photo.badge.plus")
-                        }
-                        ShareLink(item: url) {
-                            Label("ファイルに保存・共有", systemImage: "square.and.arrow.up")
-                        }
-                    } else {
-                        Button {
-                            start()
-                        } label: {
-                            Label("書き出す", systemImage: "square.and.arrow.up.on.square")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
-                    if let message = model.message {
-                        Text(message).font(.footnote).foregroundStyle(Theme.subtext)
-                    }
-                }
+                presetSection
+                formatSection
+                summarySection
+                actionSection
             }
             .navigationTitle("書き出し")
             .navigationBarTitleDisplayMode(.inline)
@@ -116,13 +29,142 @@ struct ExportView: View {
                 }
             }
         }
-        .onAppear {
-            var initial: ExportSettings = controller.project.lastExport ?? ExportSettings()
-            if controller.project.lastExport == nil {
-                initial.fps = Int(min(60, controller.project.canvas.fps.rounded()))
+        .onAppear { prepare() }
+    }
+
+    private func prepare() {
+        var initial: ExportSettings = controller.project.lastExport ?? ExportSettings()
+        if controller.project.lastExport == nil {
+            initial.fps = Int(min(60, controller.project.canvas.fps.rounded()))
+        }
+        settings = controller.limits.clamp(initial)
+        controller.pause()
+    }
+
+    private var presetSection: some View {
+        Section("投稿先のプリセット") {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(ExportPreset.all) { preset in
+                        presetButton(preset)
+                    }
+                }
+                .padding(.vertical, 4)
             }
-            settings = controller.limits.clamp(initial)
-            controller.pause()
+            if let note = aspectNote {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(Theme.subtext)
+            }
+        }
+    }
+
+    private var aspectNote: String? {
+        guard let preset = ExportPreset.all.first(where: { $0.id == presetID }), let aspect = preset.aspect else { return nil }
+        let current: AspectPreset = controller.project.canvas.aspect
+        if aspect == current { return nil }
+        return "このプリセットは \(aspect.label) 向けです。今の画面は \(current.label) なので、上下か左右に余白が付きます（「画面」で縦横比を変えられます）。"
+    }
+
+    private var formatSection: some View {
+        Section("形式") {
+            Picker("形式", selection: $settings.format) {
+                ForEach(ExportFormat.allCases, id: \.self) { f in Text(f.label).tag(f) }
+            }
+            .pickerStyle(.segmented)
+            if settings.format == .mp4 {
+                videoOptions
+            } else {
+                Stepper("GIF のコマ数：\(settings.gifFps)fps", value: $settings.gifFps, in: 5...24)
+                Stepper("GIF の幅：\(settings.gifMaxWidth)px", value: $settings.gifMaxWidth, in: 160...960, step: 80)
+            }
+            if controller.project.playRange != nil {
+                Toggle("範囲指定の部分だけ書き出す", isOn: $useRange)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var videoOptions: some View {
+        Picker("コーデック", selection: $settings.codec) {
+            ForEach(VideoCodec.allCases, id: \.self) { c in Text(c.label).tag(c) }
+        }
+        .disabled(!controller.limits.supportsHEVC)
+        Picker("解像度", selection: $settings.resolution) {
+            ForEach(allowedResolutions, id: \.self) { r in Text(r.label).tag(r) }
+        }
+        Picker("フレームレート", selection: $settings.fps) {
+            ForEach(allowedFrameRates, id: \.self) { f in Text("\(f)fps").tag(f) }
+        }
+        Toggle("音声を含める", isOn: $settings.includeAudio)
+        bitrateRow
+    }
+
+    private var allowedResolutions: [ExportResolution] {
+        return ExportResolution.allCases.filter { controller.limits.allows($0) }
+    }
+
+    private var allowedFrameRates: [Int] {
+        return ExportSettings.frameRates.filter { controller.limits.allows(fps: $0) }
+    }
+
+    private var summarySection: some View {
+        Section {
+            summary
+            if let warning = storageWarning {
+                Label(warning, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+            if let note = limitNote {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(Theme.subtext)
+            }
+        }
+    }
+
+    private var limitNote: String? {
+        let limits: DeviceLimits = controller.limits
+        if limits.maxResolution == .p2160 && limits.maxFps >= 120 { return nil }
+        return "この端末では \(limits.maxResolution.label)・\(limits.maxFps)fps まで選べます。"
+    }
+
+    private var actionSection: some View {
+        Section {
+            if model.isExporting {
+                ProgressView(value: model.progress) {
+                    Text("書き出し中… \(Int(model.progress * 100))%")
+                }
+                Button("中止", role: .destructive) { model.cancel() }
+            } else if let url = model.output {
+                finishedActions(url)
+            } else {
+                Button {
+                    start()
+                } label: {
+                    Label("書き出す", systemImage: "square.and.arrow.up.on.square")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            if let message = model.message {
+                Text(message).font(.footnote).foregroundStyle(Theme.subtext)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func finishedActions(_ url: URL) -> some View {
+        Label("書き出しました", systemImage: "checkmark.circle.fill")
+            .foregroundStyle(.green)
+        Button {
+            model.saveToPhotos(url, isGIF: settings.format == .gif)
+        } label: {
+            Label("写真ライブラリに保存", systemImage: "photo.badge.plus")
+        }
+        ShareLink(item: url) {
+            Label("ファイルに保存・共有", systemImage: "square.and.arrow.up")
         }
     }
 

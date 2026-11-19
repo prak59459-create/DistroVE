@@ -229,6 +229,15 @@ struct SubtitleStyleEditor: View {
         let style: SubtitleStyle = track.subtitleStyle
         VStack(alignment: .leading, spacing: 4) {
             PanelTitle(text: "字幕のスタイル")
+            Menu {
+                Button("システム（標準）") { controller.updateSubtitleStyle { $0.fontName = "" } }
+                ForEach(TextEditorPanel.fontFamilies(), id: \.self) { family in
+                    Button(family) { controller.updateSubtitleStyle { $0.fontName = family } }
+                }
+            } label: {
+                Label(style.fontName.isEmpty ? "フォント：システム" : "フォント：" + style.fontName, systemImage: "textformat")
+                    .font(.footnote)
+            }
             ParamRow(label: "大きさ", range: 0.02...0.12, value: style.size, onChange: { v in controller.updateSubtitleStyle { $0.size = v } })
             ParamRow(label: "縁取り", range: 0...0.3, value: style.strokeWidth, onChange: { v in controller.updateSubtitleStyle { $0.strokeWidth = v } })
             ParamRow(label: "下からの位置", range: 0.02...0.5, value: style.bottomMargin, onChange: { v in controller.updateSubtitleStyle { $0.bottomMargin = v } })

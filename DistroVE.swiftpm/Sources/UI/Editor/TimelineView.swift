@@ -371,14 +371,20 @@ final class TimelineCanvasView: UIView, UIGestureRecognizerDelegate {
         if clip.kind == .video || clip.kind == .image || clip.kind == .gif, let asset = project.asset(clip.mediaID),
            let strip = ThumbnailStore.shared.strip(asset.id), let first = strip.images.first {
             let tileHeight: CGFloat = frame.height - 2
-            let aspect: CGFloat = CGFloat(first.width) / CGFloat(max(1, first.height))
+            let imageWidth: CGFloat = CGFloat(first.width)
+            let imageHeight: CGFloat = CGFloat(max(1, first.height))
+            let aspect: CGFloat = imageWidth / imageHeight
             let tileWidth: CGFloat = max(16, tileHeight * aspect)
-            var tx: CGFloat = max(frame.minX, visible.minX - (visible.minX - frame.minX).truncatingRemainder(dividingBy: tileWidth))
+            let offset: CGFloat = visible.minX - frame.minX
+            let phase: CGFloat = offset.truncatingRemainder(dividingBy: tileWidth)
+            var tx: CGFloat = max(frame.minX, visible.minX - phase)
             let map = SpeedMap(settings: clip.speed)
             while tx < visible.maxX {
-                let localSeconds: Double = Double((tx - frame.minX) / pointsPerSecond)
+                let distance: CGFloat = tx - frame.minX
+                let localSeconds: Double = Double(distance / pointsPerSecond)
                 let local = Time(seconds: localSeconds)
-                let source: Double = (clip.sourceStart + map.sourceOffset(atTimeline: local, timelineDuration: clip.duration)).seconds
+                let sourceTime: Time = clip.sourceStart + map.sourceOffset(atTimeline: local, timelineDuration: clip.duration)
+                let source: Double = sourceTime.seconds
                 if let image = strip.image(atSeconds: source) {
                     ctx.saveGState()
                     ctx.translateBy(x: tx, y: frame.minY + 1 + tileHeight)

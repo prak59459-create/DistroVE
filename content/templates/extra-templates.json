@@ -1,0 +1,10 @@
+[
+  {"id":"product-intro","name":"商品紹介","category":"仕事・教育","summary":"4:5。商品を 3 秒ずつ見せ、帯のテロップで特長を伝える。",
+   "aspect":"portrait4x5","fps":30,"music":"bgm.upbeat","beatsPerCut":6,"slotSeconds":3,"slots":5,
+   "transition":"slideLeft","transitionSeconds":0.3,"look":"vivid","effects":[],
+   "texts":[{"text":"NEW ITEM","preset":"band","start":0,"duration":3,"positionY":0.32}],"captions":false},
+  {"id":"cozy-vertical-vlog","name":"ゆる縦 Vlog","category":"Vlog","summary":"9:16。パステルの色味と Lo-Fi、ゆっくりした切り替え。",
+   "aspect":"portrait9x16","fps":30,"music":"bgm.lofi","beatsPerCut":4,"slotSeconds":3,"slots":8,
+   "transition":"fade","transitionSeconds":0.5,"look":"pastel","effects":["grain"],
+   "texts":[{"text":"today","preset":"cinema","start":0.3,"duration":3,"positionY":-0.3}],"captions":true}
+]

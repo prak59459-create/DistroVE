@@ -327,45 +327,13 @@ struct TemplateGallery: View {
         NavigationStack {
             List {
                 ForEach(templates) { template in
-                    Button {
+                    TemplateRow(template: template, isSelected: selected?.id == template.id) {
                         selected = template
-                    } label: {
-                        HStack(alignment: .top, spacing: 12) {
-                            Image(systemName: template.aspect == .portrait9x16 ? "rectangle.portrait" : "rectangle")
-                                .font(.title2)
-                                .frame(width: 34)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(template.name).font(.subheadline.weight(.semibold))
-                                Text(template.category + " ・ " + template.aspect.label).font(.caption).foregroundStyle(Theme.subtext)
-                                Text(template.summary).font(.caption).foregroundStyle(Theme.subtext)
-                            }
-                            Spacer()
-                            if selected?.id == template.id {
-                                Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent)
-                            }
-                        }
                     }
-                    .buttonStyle(.plain)
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                VStack(spacing: 8) {
-                    if working {
-                        ProgressView(status)
-                    } else if let template = selected {
-                        PhotosPicker(selection: $items, maxSelectionCount: 30, matching: .any(of: [.videos, .images])) {
-                            Label("素材を選んで作る（おすすめ \(template.slots) 個）", systemImage: "photo.on.rectangle")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        Button("素材なしで作る") { build(template, items: []) }
-                            .buttonStyle(.bordered)
-                    } else {
-                        Text("テンプレートを選んでください").font(.footnote).foregroundStyle(Theme.subtext)
-                    }
-                }
-                .padding()
-                .background(.bar)
+                bottomBar
             }
             .navigationTitle("テンプレート")
             .navigationBarTitleDisplayMode(.inline)
@@ -376,6 +344,26 @@ struct TemplateGallery: View {
                 if let template = selected, !picked.isEmpty { build(template, items: picked) }
             }
         }
+    }
+
+    private var bottomBar: some View {
+        VStack(spacing: 8) {
+            if working {
+                ProgressView(status)
+            } else if let template = selected {
+                PhotosPicker(selection: $items, maxSelectionCount: 30, matching: .any(of: [.videos, .images])) {
+                    Label("素材を選んで作る（おすすめ \(template.slots) 個）", systemImage: "photo.on.rectangle")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                Button("素材なしで作る") { build(template, items: []) }
+                    .buttonStyle(.bordered)
+            } else {
+                Text("テンプレートを選んでください").font(.footnote).foregroundStyle(Theme.subtext)
+            }
+        }
+        .padding()
+        .background(.bar)
     }
 
     private func build(_ template: TemplateDefinition, items: [PhotosPickerItem]) {
@@ -402,6 +390,32 @@ struct TemplateGallery: View {
             working = false
             onCreate(project)
         }
+    }
+}
+
+struct TemplateRow: View {
+    let template: TemplateDefinition
+    let isSelected: Bool
+    let onSelect: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: template.aspect == .portrait9x16 ? "rectangle.portrait" : "rectangle")
+                    .font(.title2)
+                    .frame(width: 34)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(template.name).font(.subheadline.weight(.semibold))
+                    Text(template.category + " ・ " + template.aspect.label).font(.caption).foregroundStyle(Theme.subtext)
+                    Text(template.summary).font(.caption).foregroundStyle(Theme.subtext)
+                }
+                Spacer()
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 

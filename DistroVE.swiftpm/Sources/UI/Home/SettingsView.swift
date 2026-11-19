@@ -16,81 +16,16 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("画面") {
-                    Picker("テーマ", selection: $settings.theme) {
-                        ForEach(AppSettings.Theme.allCases) { t in Text(t.label).tag(t) }
-                    }
-                    Picker("文字の大きさ", selection: $settings.textSize) {
-                        ForEach(AppSettings.TextSize.allCases) { t in Text(t.label).tag(t) }
-                    }
-                    Toggle("色覚に配慮した配色", isOn: $settings.colorBlindPalette)
-                    Picker("パネルの位置（横向き）", selection: $settings.inspectorPosition) {
-                        ForEach(AppSettings.InspectorPosition.allCases) { p in Text(p.label).tag(p) }
-                    }
-                    Toggle("ツールバーを上に置く", isOn: $settings.toolbarAtTop)
-                    Toggle("スナップ（吸着）", isOn: $settings.snapping)
-                }
-                Section("素材") {
-                    Toggle("取り込むときにコピーする（オフで参照のみ）", isOn: $settings.copyMediaOnImport)
-                    Toggle("重い素材は自動でプロキシを作る", isOn: $settings.autoProxy)
-                }
+                displaySection
+                mediaSection
                 Section("キーボードショートカット") {
                     NavigationLink("割り当てを変える") { ShortcutEditor() }
                 }
-                Section("同期・バックアップ") {
-                    Text(syncFolder.map { "同期先：\($0)" } ?? "同期先が未設定です（iCloud Drive などのフォルダーを選べます）")
-                        .font(.footnote)
-                    Button("同期先のフォルダーを選ぶ") { showFolderPicker = true }
-                    if syncFolder != nil {
-                        Button("今すぐ同期") { sync() }
-                        Button("同期をやめる", role: .destructive) {
-                            try? ProjectStore.shared.setSyncFolder(nil)
-                            syncFolder = nil
-                        }
-                    }
-                    Text("プロジェクトは自動保存し、手動保存と 5 分ごとにバックアップを残します（最大 20 世代）。")
-                        .font(.caption)
-                        .foregroundStyle(Theme.subtext)
-                }
-                Section("容量") {
-                    LabeledContent("キャッシュ", value: ByteCountFormatter.string(fromByteCount: cacheSize, countStyle: .file))
-                    Button("キャッシュを削除") {
-                        CacheManager.clearAll()
-                        cacheSize = CacheManager.cacheSize()
-                        message = "キャッシュを削除しました"
-                    }
-                    Button("使っていない素材ファイルを削除") {
-                        let freed: Int64 = ProjectStore.shared.cleanUnusedMedia()
-                        message = ByteCountFormatter.string(fromByteCount: freed, countStyle: .file) + " 空きました"
-                    }
-                }
-                Section("AI とプライバシー") {
-                    Toggle("端末内で文字起こしできないとき、音声だけ Apple のサーバーに送ってよい", isOn: $settings.allowServerSpeech)
-                    Toggle("機能の使用回数を端末内に記録する（同意）", isOn: $usageConsent)
-                        .onChange(of: usageConsent) { _, value in Diagnostics.shared.usageConsent = value }
-                    NavigationLink("記録とクラッシュログを見る") { DiagnosticsView() }
-                    NavigationLink("プライバシーポリシー") { PrivacyPolicyView() }
-                }
-                Section("追加のテンプレート・LUT（GitHub から受け取る）") {
-                    Toggle("起動時に確認する", isOn: $contentAutoCheck)
-                        .onChange(of: contentAutoCheck) { _, value in ContentUpdater.shared.autoCheck = value }
-                    Button(updating ? "確認中…" : "今すぐ確認") { checkContent() }
-                        .disabled(updating)
-                    Text("受け取るのはテンプレートと LUT のデータだけで、アプリのプログラムは変わりません。次回の起動で反映されます。")
-                        .font(.caption)
-                        .foregroundStyle(Theme.subtext)
-                }
-                Section("このアプリについて") {
-                    LabeledContent("バージョン", value: ContentUpdater.appVersion)
-                    LabeledContent("端末の温度", value: DeviceCapability.thermalLabel)
-                    Text("Distro VE は無料・端末内処理の動画編集アプリです。書き出した動画に透かしは入りません。")
-                        .font(.caption)
-                        .foregroundStyle(Theme.subtext)
-                    Button("チュートリアルをもう一度見る") {
-                        settings.hasSeenTutorial = false
-                        dismiss()
-                    }
-                }
+                syncSection
+                storageSection
+                privacySection
+                contentSection
+                aboutSection
                 if let message = message {
                     Text(message).font(.footnote).foregroundStyle(Theme.accent)
                 }
@@ -101,15 +36,111 @@ struct SettingsView: View {
                 ToolbarItem(placement: .confirmationAction) { Button("完了") { dismiss() } }
             }
             .fileImporter(isPresented: $showFolderPicker, allowedContentTypes: [.folder], allowsMultipleSelection: false) { result in
-                if case .success(let urls) = result, let url = urls.first {
-                    do {
-                        try ProjectStore.shared.setSyncFolder(url)
-                        syncFolder = ProjectStore.shared.syncFolderName
-                    } catch {
-                        message = error.localizedDescription
-                    }
+                chooseFolder(result)
+            }
+        }
+    }
+
+    private var displaySection: some View {
+        Section("画面") {
+            Picker("テーマ", selection: $settings.theme) {
+                ForEach(AppSettings.Theme.allCases) { t in Text(t.label).tag(t) }
+            }
+            Picker("文字の大きさ", selection: $settings.textSize) {
+                ForEach(AppSettings.TextSize.allCases) { t in Text(t.label).tag(t) }
+            }
+            Toggle("色覚に配慮した配色", isOn: $settings.colorBlindPalette)
+            Picker("パネルの位置（横向き）", selection: $settings.inspectorPosition) {
+                ForEach(AppSettings.InspectorPosition.allCases) { p in Text(p.label).tag(p) }
+            }
+            Toggle("ツールバーを上に置く", isOn: $settings.toolbarAtTop)
+            Toggle("スナップ（吸着）", isOn: $settings.snapping)
+        }
+    }
+
+    private var mediaSection: some View {
+        Section("素材") {
+            Toggle("取り込むときにコピーする（オフで参照のみ）", isOn: $settings.copyMediaOnImport)
+            Toggle("重い素材は自動でプロキシを作る", isOn: $settings.autoProxy)
+        }
+    }
+
+    private var syncSection: some View {
+        Section("同期・バックアップ") {
+            Text(syncFolder.map { "同期先：\($0)" } ?? "同期先が未設定です（iCloud Drive などのフォルダーを選べます）")
+                .font(.footnote)
+            Button("同期先のフォルダーを選ぶ") { showFolderPicker = true }
+            if syncFolder != nil {
+                Button("今すぐ同期") { sync() }
+                Button("同期をやめる", role: .destructive) {
+                    try? ProjectStore.shared.setSyncFolder(nil)
+                    syncFolder = nil
                 }
             }
+            Text("プロジェクトは自動保存し、手動保存と 5 分ごとにバックアップを残します（最大 20 世代）。")
+                .font(.caption)
+                .foregroundStyle(Theme.subtext)
+        }
+    }
+
+    private var storageSection: some View {
+        Section("容量") {
+            LabeledContent("キャッシュ", value: ByteCountFormatter.string(fromByteCount: cacheSize, countStyle: .file))
+            Button("キャッシュを削除") {
+                CacheManager.clearAll()
+                cacheSize = CacheManager.cacheSize()
+                message = "キャッシュを削除しました"
+            }
+            Button("使っていない素材ファイルを削除") {
+                let freed: Int64 = ProjectStore.shared.cleanUnusedMedia()
+                message = ByteCountFormatter.string(fromByteCount: freed, countStyle: .file) + " 空きました"
+            }
+        }
+    }
+
+    private var privacySection: some View {
+        Section("AI とプライバシー") {
+            Toggle("端末内で文字起こしできないとき、音声だけ Apple のサーバーに送ってよい", isOn: $settings.allowServerSpeech)
+            Toggle("機能の使用回数を端末内に記録する（同意）", isOn: $usageConsent)
+                .onChange(of: usageConsent) { _, value in Diagnostics.shared.usageConsent = value }
+            NavigationLink("記録とクラッシュログを見る") { DiagnosticsView() }
+            NavigationLink("プライバシーポリシー") { PrivacyPolicyView() }
+        }
+    }
+
+    private var contentSection: some View {
+        Section("追加のテンプレート・LUT（GitHub から受け取る）") {
+            Toggle("起動時に確認する", isOn: $contentAutoCheck)
+                .onChange(of: contentAutoCheck) { _, value in ContentUpdater.shared.autoCheck = value }
+            Button(updating ? "確認中…" : "今すぐ確認") { checkContent() }
+                .disabled(updating)
+            Text("受け取るのはテンプレートと LUT のデータだけで、アプリのプログラムは変わりません。次回の起動で反映されます。")
+                .font(.caption)
+                .foregroundStyle(Theme.subtext)
+        }
+    }
+
+    private var aboutSection: some View {
+        Section("このアプリについて") {
+            LabeledContent("バージョン", value: ContentUpdater.appVersion)
+            LabeledContent("端末の温度", value: DeviceCapability.thermalLabel)
+            Text("Distro VE は無料・端末内処理の動画編集アプリです。書き出した動画に透かしは入りません。")
+                .font(.caption)
+                .foregroundStyle(Theme.subtext)
+            Button("チュートリアルをもう一度見る") {
+                settings.hasSeenTutorial = false
+                dismiss()
+            }
+        }
+    }
+
+    private func chooseFolder(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result, let url = urls.first else { return }
+        do {
+            try ProjectStore.shared.setSyncFolder(url)
+            syncFolder = ProjectStore.shared.syncFolderName
+        } catch {
+            message = error.localizedDescription
         }
     }
 

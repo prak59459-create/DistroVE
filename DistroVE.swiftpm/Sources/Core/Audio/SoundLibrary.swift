@@ -125,9 +125,17 @@ struct Synth {
         }
     }
 
+    private static let noiseMultiplier: UInt32 = 1_664_525
+    private static let noiseIncrement: UInt32 = 1_013_904_223
+    private static let noiseScale: Double = 1.0 / 16_777_216.0
+
+    /// 線形合同法の白色雑音（-1〜1）。型推論を軽くするため、定数は型を決めて分けておく。
     mutating func noise() -> Double {
-        noiseState = noiseState &* 1_664_525 &+ 1_013_904_223
-        return Double(noiseState >> 8) / Double(1 << 24) * 2 - 1
+        let next: UInt32 = noiseState &* Synth.noiseMultiplier
+        noiseState = next &+ Synth.noiseIncrement
+        let bits: UInt32 = noiseState >> 8
+        let unit: Double = Double(bits) * Synth.noiseScale
+        return unit * 2.0 - 1.0
     }
 
     /// time 秒から length 秒、voice(t) を足し込む。
