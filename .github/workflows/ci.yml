@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-linux:
+    name: Core（Linux）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift
+        run: swift --version
+      - name: クリーンビルドの時間
+        run: scripts/measure-core-build.sh
+      - name: テスト
+        run: swift test
+
+  apple:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            name: iPad アプリ（Xcode 16 系）
+          - os: macos-26
+            name: iPad アプリ（Xcode 26 系）
+    steps:
+      - uses: actions/checkout@v4
+      - name: Xcode
+        run: |
+          xcodebuild -version
+          swift --version
+          xcrun --sdk iphonesimulator --show-sdk-version
+      - name: iPadOS 向けの型チェック（全ソース）
+        run: scripts/ios-typecheck.sh
+      - name: アプリのビルド（xcodebuild・時間計測）
+        if: ${{ !cancelled() }}
+        run: scripts/ios-build.sh
+      - name: エンジンのテスト（macOS で AVFoundation を実際に動かす）
+        if: ${{ !cancelled() }}
+        run: swift test
