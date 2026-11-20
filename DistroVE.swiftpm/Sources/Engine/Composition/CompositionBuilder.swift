@@ -113,10 +113,10 @@ final class CompositionBuilder: @unchecked Sendable {
             for (position, clip) in track.clips.enumerated() where clip.kind == .video {
                 guard let asset = project.asset(clip.mediaID) else { continue }
                 let reversedURL: URL? = clip.speed.reversed ? media.url(for: asset, variant: .reversed) : nil
-                let smooth: InterpolatedMedia? = reversedURL == nil ? CompositionBuilder.smoothSource(clip, asset) : nil
-                let smoothURL: URL? = smooth != nil ? media.url(for: asset, variant: .interpolated) : nil
-                let url: URL? = reversedURL ?? smoothURL ?? media.url(for: asset, variant: options.useProxies ? .proxy : .original)
+                let url: URL? = reversedURL ?? media.url(for: asset, variant: options.useProxies ? .proxy : .original)
                 guard let fileURL = url, let loaded = try? await load(fileURL), let sourceTrack = loaded.video else { continue }
+                // 速さを変えたクリップのために作ったコマ（Q99）。あればクリップ本体はそれを等速で使う
+                let retimed: Loaded? = await retimedSource(clip, asset, fps: fps, projectFPS: project.canvas.fps)
                 var lead: Time = .zero
                 var trail: Time = .zero
                 if isMain {
@@ -147,9 +147,6 @@ final class CompositionBuilder: @unchecked Sendable {
                 var base: Time = clip.sourceStart
                 if reversed {
                     base = max(.zero, mediaDuration - clip.sourceStart - clip.sourceDuration)
-                } else if smoothURL != nil, let made = smooth {
-                    // コマを足したファイルの 0 秒は素材の made.range.start
-                    base = max(.zero, clip.sourceStart - made.range.start)
                 }
                 let mediaFrame: Time = Time.frameDuration(fps: loaded.frameRate)
                 let map = SpeedMap(settings: clip.speed)
@@ -158,7 +155,11 @@ final class CompositionBuilder: @unchecked Sendable {
                     try insertHandle(target, source: sourceTrack, at: windowStart, length: lead, sourceStart: base - needed,
                                      sourceLength: needed, freezeAt: base, frame: mediaFrame, mediaDuration: mediaDuration)
                 }
-                try insertBody(target, source: sourceTrack, clip: clip, map: map, base: base, mediaDuration: mediaDuration)
+                if let made = retimed, let madeTrack = made.video {
+                    try insertRetimed(target, source: madeTrack, clip: clip, length: made.duration)
+                } else {
+                    try insertBody(target, source: sourceTrack, clip: clip, map: map, base: base, mediaDuration: mediaDuration)
+                }
                 if trail.isPositive {
                     let sourceEnd: Time = base + clip.sourceDuration
                     let needed: Time = trail.scaled(map.rate(at: 1))
@@ -188,11 +189,30 @@ final class CompositionBuilder: @unchecked Sendable {
         return Result(composition: composition, videoComposition: videoComposition, audioMix: audioMix, graph: graph, duration: total)
     }
 
-    /// なめらかスロー（Q99）で使える、コマを足したファイル。クリップの範囲をすべて含むときだけ使う。
-    static func smoothSource(_ clip: Clip, _ asset: MediaAsset) -> InterpolatedMedia? {
-        guard clip.speed.smooth, let made = asset.interpolated else { return nil }
-        let source = TimeRange(start: clip.sourceStart, duration: clip.sourceDuration)
-        return made.covers(source, factor: 1) ? made : nil
+    /// 速さを変えたクリップのために作ったコマのファイル（Q99）。このフレームレートのものが無ければ、プロジェクトのフレームレートのもの。
+    private func retimedSource(_ clip: Clip, _ asset: MediaAsset, fps: Double, projectFPS: Double) async -> Loaded? {
+        if !clip.speed.makesFrames { return nil }
+        var rates: [Double] = [fps]
+        if abs(projectFPS - fps) > 0.001 { rates.append(projectFPS) }
+        for rate in rates {
+            let plan = RetimePlan(clip: clip, asset: asset, fps: rate)
+            if !plan.isNeeded(sourceFPS: asset.frameRate) { return nil }
+            let url: URL = AppPaths.media.appendingPathComponent(plan.cachePath)
+            if FileManager.default.fileExists(atPath: url.path), let loaded = try? await load(url), loaded.video != nil {
+                return loaded
+            }
+        }
+        return nil
+    }
+
+    /// 作ったコマのファイルをクリップの位置にそのまま（等速で）入れる。
+    private func insertRetimed(_ target: AVMutableCompositionTrack, source: AVAssetTrack, clip: Clip, length: Time) throws {
+        let available: Time = min(length, clip.duration)
+        if !available.isPositive { return }
+        try target.insertTimeRange(CMTimeRange(start: .zero, duration: available.cmTime), of: source, at: clip.start.cmTime)
+        if available < clip.duration {
+            target.scaleTimeRange(CMTimeRange(start: clip.start.cmTime, duration: available.cmTime), toDuration: clip.duration.cmTime)
+        }
     }
 
     /// クリップ本体を一定速度の区間ごとに入れる。

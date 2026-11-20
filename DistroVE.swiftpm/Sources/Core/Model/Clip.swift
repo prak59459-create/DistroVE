@@ -170,19 +170,28 @@ struct SpeedSettings: Hashable, Codable, Sendable {
     var reversed: Bool
     /// 速度を変えても声の高さを保つ
     var preservePitch: Bool
-    /// スローのとき、オプティカルフローで作ったコマの間を使う（Q99）
-    var smooth: Bool
+    /// コマの間の作り方（Q99）。スロー・フレームレートの違い・モーションブラーのときに使う
+    var interpolation: FrameInterpolation
+    /// モーションブラー（シャッターの開いている割合。0 = なし、0.5 = 180°）
+    var motionBlur: Double
 
     init(rate: Double = 1) {
         self.rate = rate
         self.curve = []
         self.reversed = false
         self.preservePitch = true
-        self.smooth = false
+        self.interpolation = .sampling
+        self.motionBlur = 0
+    }
+
+    /// 以前の「なめらかスロー」のオン・オフ（光学フローと同じ）。
+    var smooth: Bool {
+        get { return interpolation == .opticalFlow }
+        set { interpolation = newValue ? .opticalFlow : .sampling }
     }
 
     private enum CodingKeys: String, CodingKey {
-        case rate, curve, reversed, preservePitch, smooth
+        case rate, curve, reversed, preservePitch, smooth, interpolation, motionBlur
     }
 
     init(from decoder: Decoder) throws {
@@ -191,10 +200,22 @@ struct SpeedSettings: Hashable, Codable, Sendable {
         curve = c.value(.curve, [SpeedPoint]())
         reversed = c.value(.reversed, false)
         preservePitch = c.value(.preservePitch, true)
-        smooth = c.value(.smooth, false)
+        let legacySmooth: Bool = c.value(.smooth, false)
+        interpolation = c.value(.interpolation, legacySmooth ? FrameInterpolation.opticalFlow : FrameInterpolation.sampling)
+        motionBlur = c.value(.motionBlur, 0.0)
     }
 
-    /// いちばん遅いところの倍率（なめらかスローでどれだけコマを足すかの目安）。
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(rate, forKey: .rate)
+        try c.encode(curve, forKey: .curve)
+        try c.encode(reversed, forKey: .reversed)
+        try c.encode(preservePitch, forKey: .preservePitch)
+        try c.encode(interpolation, forKey: .interpolation)
+        try c.encode(motionBlur, forKey: .motionBlur)
+    }
+
+    /// いちばん遅いところの倍率。
     var slowestRate: Double {
         if !hasCurve { return rate }
         var slowest: Double = rate
@@ -204,12 +225,9 @@ struct SpeedSettings: Hashable, Codable, Sendable {
         return slowest
     }
 
-    /// なめらかスローで足すコマの倍数（2・4・8）。
-    var suggestedInterpolationFactor: Int {
-        let slowest: Double = max(0.01, slowestRate)
-        if slowest >= 0.75 { return 2 }
-        if slowest >= 0.35 { return 4 }
-        return 8
+    /// コマの間を作る設定か（コマの合成・光学フロー・モーションブラー）。
+    var makesFrames: Bool {
+        return interpolation != .sampling || motionBlur > 0.001
     }
 
     var hasCurve: Bool { return curve.count >= 2 }
@@ -361,7 +379,8 @@ struct Clip: Identifiable, Codable, Sendable {
             result.append(String(format: "%.2gx", speed.rate))
         }
         if speed.reversed { result.append("逆") }
-        if speed.smooth { result.append("なめらか") }
+        if let mark = speed.interpolation.badge { result.append(mark) }
+        if speed.motionBlur > 0.001 { result.append("ブラー") }
         if !effects.isEmpty { result.append("FX\(effects.count)") }
         if look != nil || !color.values.isEmpty { result.append("色") }
         if transform.isAnimated || color.isAnimated { result.append("◆") }

@@ -3,7 +3,7 @@ import AVFoundation
 import XCTest
 @testable import DistroKit
 
-/// オプティカルフローのコマ補間（Q99）を実際に動かすテスト（macOS で実行）。
+/// 速さを変えたクリップのコマ作り（Q99: 光学フロー・コマの合成・モーションブラー・カット）を実際に動かすテスト（macOS で実行）。
 final class InterpolationTests: XCTestCase {
     var root: URL!
 
@@ -24,9 +24,9 @@ final class InterpolationTests: XCTestCase {
     private let height: Int = 240
     private let squareSize: Int = 48
 
-    /// 市松模様の四角が 1 コマに 8 画素ずつ右へ動く動画。
-    private func makeMovingSquare(frames: Int, fps: Int) async throws -> URL {
-        let url: URL = root.appendingPathComponent("square.mov")
+    /// 市松模様の四角が 1 コマに 8 画素ずつ右へ動く動画。cutAt を渡すと、そのコマからは横じまの別の場面になる。
+    private func makeMovingSquare(frames: Int, fps: Int, cutAt: Int? = nil) async throws -> URL {
+        let url: URL = root.appendingPathComponent("square-\(UUID().uuidString).mov")
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         var settings: [String: Any] = [:]
         settings[AVVideoCodecKey] = AVVideoCodecType.h264
@@ -50,7 +50,11 @@ final class InterpolationTests: XCTestCase {
             var made: CVPixelBuffer?
             CVPixelBufferPoolCreatePixelBuffer(nil, adaptor.pixelBufferPool!, &made)
             let buffer: CVPixelBuffer = try XCTUnwrap(made)
-            draw(buffer, left: 20 + i * 8, top: 96)
+            if let cut = cutAt, i >= cut {
+                drawStripes(buffer, offset: i - cut)
+            } else {
+                draw(buffer, left: 20 + i * 8, top: 96)
+            }
             XCTAssertTrue(adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(i), timescale: CMTimeScale(fps))))
         }
         input.markAsFinished()
@@ -78,31 +82,73 @@ final class InterpolationTests: XCTestCase {
         }
     }
 
-    /// 明るい画素の重心の x と、その数。
-    private func brightCentroid(_ buffer: CVPixelBuffer) -> (x: Double, count: Int) {
+    /// カットの後の場面（横じま。少しずつ下へ動く）。
+    private func drawStripes(_ buffer: CVPixelBuffer, offset: Int) {
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        let base: UnsafeMutablePointer<UInt8> = CVPixelBufferGetBaseAddress(buffer)!.assumingMemoryBound(to: UInt8.self)
+        let bytesPerRow: Int = CVPixelBufferGetBytesPerRow(buffer)
+        for y in 0..<height {
+            let band: Bool = ((y + offset * 2) / 20) % 2 == 0
+            for x in 0..<width {
+                let value: UInt8 = band ? UInt8(90 + x % 40) : 160
+                let p: Int = y * bytesPerRow + x * 4
+                base[p] = value
+                base[p + 1] = value
+                base[p + 2] = value
+                base[p + 3] = 255
+            }
+        }
+    }
+
+    /// 1 コマの調べた結果。
+    private struct FrameInfo {
+        var time: Double
+        /// 明るい画素の重心の x（無ければ -1）と数
+        var centroid: Double
+        var bright: Int
+        /// 中間の明るさ（二重に重なった所）の画素の数
+        var halfTone: Int
+        /// 真ん中の行で、背景より明るい画素の幅
+        var rowWidth: Int
+        /// 縮小した明るさ（コマどうしの比較用）
+        var thumbnail: [Double]
+    }
+
+    private func inspect(_ buffer: CVPixelBuffer, time: Double) -> FrameInfo {
         CVPixelBufferLockBaseAddress(buffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
         let base: UnsafeMutablePointer<UInt8> = CVPixelBufferGetBaseAddress(buffer)!.assumingMemoryBound(to: UInt8.self)
         let bytesPerRow: Int = CVPixelBufferGetBytesPerRow(buffer)
+        let w: Int = CVPixelBufferGetWidth(buffer)
+        let h: Int = CVPixelBufferGetHeight(buffer)
         var sum: Double = 0
-        var count: Int = 0
-        for y in 0..<CVPixelBufferGetHeight(buffer) {
-            for x in 0..<CVPixelBufferGetWidth(buffer) where base[y * bytesPerRow + x * 4 + 1] > 150 {
-                sum += Double(x)
-                count += 1
+        var bright: Int = 0
+        var half: Int = 0
+        var rowWidth: Int = 0
+        var thumbnail: [Double] = Array(repeating: 0, count: 16 * 12)
+        for y in 0..<h {
+            for x in 0..<w {
+                let value: UInt8 = base[y * bytesPerRow + x * 4 + 1]
+                if value > 150 {
+                    sum += Double(x)
+                    bright += 1
+                } else if value > 110 && value < 150 {
+                    half += 1
+                }
+                if y == h / 2 && value > 60 { rowWidth += 1 }
+                let cell: Int = min(11, y * 12 / h) * 16 + min(15, x * 16 / w)
+                thumbnail[cell] += Double(value)
             }
         }
-        return (count > 0 ? sum / Double(count) : -1, count)
+        let perCell: Double = Double(w * h) / Double(16 * 12)
+        for i in 0..<thumbnail.count { thumbnail[i] /= perCell }
+        return FrameInfo(time: time, centroid: bright > 0 ? sum / Double(bright) : -1, bright: bright, halfTone: half,
+                         rowWidth: rowWidth, thumbnail: thumbnail)
     }
 
-    func testInterpolatedFramesPutTheSquareHalfway() async throws {
-        let interpolator: FrameInterpolator = try XCTUnwrap(FrameInterpolator.shared)
-        let source: URL = try await makeMovingSquare(frames: 30, fps: 30)
-        let output: URL = root.appendingPathComponent("smooth.mov")
-        let range = TimeRange(start: .zero, duration: Time(seconds: 1))
-        try await interpolator.interpolate(url: source, range: range, factor: 2, accuracy: .high, output: output, progress: nil)
-
-        let asset = AVURLAsset(url: output)
+    private func read(_ url: URL) async throws -> [FrameInfo] {
+        let asset = AVURLAsset(url: url)
         let videoTracks: [AVAssetTrack] = try await asset.loadTracks(withMediaType: .video)
         let track: AVAssetTrack = try XCTUnwrap(videoTracks.first)
         let reader = try AVAssetReader(asset: asset)
@@ -111,25 +157,149 @@ final class InterpolationTests: XCTestCase {
         let out = AVAssetReaderTrackOutput(track: track, outputSettings: attributes)
         reader.add(out)
         XCTAssertTrue(reader.startReading())
-        var centroids: [(x: Double, count: Int)] = []
-        var times: [Double] = []
+        var frames: [FrameInfo] = []
         while let sample = out.copyNextSampleBuffer() {
             guard let buffer = CMSampleBufferGetImageBuffer(sample) else { continue }
-            centroids.append(brightCentroid(buffer))
-            times.append(CMSampleBufferGetPresentationTimeStamp(sample).seconds)
+            frames.append(inspect(buffer, time: CMSampleBufferGetPresentationTimeStamp(sample).seconds))
         }
-        XCTAssertGreaterThanOrEqual(centroids.count, 57)
-        XCTAssertLessThanOrEqual(centroids.count, 60)
-        XCTAssertEqual(times[1] - times[0], 1.0 / 60, accuracy: 0.002)
+        return frames
+    }
+
+    private func sourceAsset(_ url: URL, seconds: Double) -> MediaAsset {
+        var asset = MediaAsset(kind: .video, name: "square", storage: .copied)
+        asset.duration = Time(seconds: seconds)
+        asset.frameRate = 30
+        asset.width = width
+        asset.height = height
+        return asset
+    }
+
+    private func slowClip(rate: Double, duration: Double, mode: FrameInterpolation, blur: Double = 0) -> Clip {
+        var clip = Clip(kind: .video, name: "square", start: .zero, duration: Time(seconds: duration))
+        clip.speed = SpeedSettings(rate: rate)
+        clip.speed.interpolation = mode
+        clip.speed.motionBlur = blur
+        return clip
+    }
+
+    private func render(_ clip: Clip, source: URL, seconds: Double) async throws -> (RetimePlan, [FrameInfo]) {
+        let interpolator: FrameInterpolator = try XCTUnwrap(FrameInterpolator.shared)
+        let plan = RetimePlan(clip: clip, asset: sourceAsset(source, seconds: seconds), fps: 30)
+        let output: URL = root.appendingPathComponent("retimed-\(UUID().uuidString).mov")
+        try await interpolator.render(plan: plan, url: source, accuracy: .high, output: output, progress: nil)
+        return (plan, try await read(output))
+    }
+
+    func testOpticalFlowHalfSpeedPutsTheSquareHalfwayWithoutGhosts() async throws {
+        let source: URL = try await makeMovingSquare(frames: 30, fps: 30)
+        let (plan, frames) = try await render(slowClip(rate: 0.5, duration: 1.8, mode: .opticalFlow), source: source, seconds: 1)
+        XCTAssertEqual(plan.frames.count, 54)
+        XCTAssertEqual(frames.count, 54)
+        // 最初のコマは 0 秒、あとはタイムラインのコマの半コマ前（合成が隣のコマを拾わないように）
+        XCTAssertEqual(frames[0].time, 0, accuracy: 0.001)
+        XCTAssertEqual(frames[1].time, 1.0 / 30 - 1.0 / 60, accuracy: 0.001)
+        XCTAssertEqual(frames[2].time - frames[1].time, 1.0 / 30, accuracy: 0.001)
+        for k in 5..<25 {
+            let before: FrameInfo = frames[2 * k]
+            let middle: FrameInfo = frames[2 * k + 1]
+            let after: FrameInfo = frames[2 * k + 2]
+            XCTAssertEqual(middle.centroid, (before.centroid + after.centroid) / 2, accuracy: 2.5, "コマ \(2 * k + 1)")
+            // 二重にぼやけていない（明るい画素が元のコマと同じくらいあり、中間の明るさが元のコマより大きく増えない）
+            XCTAssertGreaterThan(Double(middle.bright), Double(before.bright) * 0.7, "コマ \(2 * k + 1)")
+            XCTAssertLessThan(middle.halfTone, before.halfTone + 250, "コマ \(2 * k + 1)")
+        }
+    }
+
+    func testBlendingMakesTheInBetweenFromBothFrames() async throws {
+        let source: URL = try await makeMovingSquare(frames: 30, fps: 30)
+        let (_, frames) = try await render(slowClip(rate: 0.5, duration: 1.8, mode: .blending), source: source, seconds: 1)
+        XCTAssertEqual(frames.count, 54)
+        for k in 5..<25 {
+            let before: FrameInfo = frames[2 * k]
+            let middle: FrameInfo = frames[2 * k + 1]
+            let after: FrameInfo = frames[2 * k + 2]
+            XCTAssertEqual(middle.centroid, (before.centroid + after.centroid) / 2, accuracy: 2.5, "コマ \(2 * k + 1)")
+            // 重ねたので、はみ出た所（左右 8 画素ずつ）が中間の明るさになる
+            XCTAssertGreaterThan(middle.halfTone, before.halfTone + 400, "コマ \(2 * k + 1)")
+        }
+    }
+
+    func testCutIsNotInterpolated() async throws {
+        let source: URL = try await makeMovingSquare(frames: 30, fps: 30, cutAt: 15)
+        let (plan, frames) = try await render(slowClip(rate: 0.5, duration: 1.8, mode: .opticalFlow), source: source, seconds: 1)
+        XCTAssertEqual(frames.count, plan.frames.count)
+        // 出力の 29 コマ目は素材の 14 コマ目と 15 コマ目（カット）の真ん中。どちらかのコマそのものになる
+        let before: FrameInfo = frames[28]
+        let middle: FrameInfo = frames[29]
+        let after: FrameInfo = frames[30]
+        let toBefore: Double = distance(middle.thumbnail, before.thumbnail)
+        let toAfter: Double = distance(middle.thumbnail, after.thumbnail)
+        XCTAssertLessThan(min(toBefore, toAfter), 2, "前 \(toBefore) / 後 \(toAfter)")
+        XCTAssertGreaterThan(distance(before.thumbnail, after.thumbnail), 20)
+        // カットのない所は間を作っている
+        XCTAssertEqual(frames[21].centroid, (frames[20].centroid + frames[22].centroid) / 2, accuracy: 2.5)
+    }
+
+    func testMotionBlurStretchesAlongTheMotion() async throws {
+        let source: URL = try await makeMovingSquare(frames: 30, fps: 30)
+        let (_, sharp) = try await render(slowClip(rate: 1, duration: 0.8, mode: .opticalFlow), source: source, seconds: 1)
+        let (_, blurred) = try await render(slowClip(rate: 1, duration: 0.8, mode: .opticalFlow, blur: 1), source: source, seconds: 1)
+        XCTAssertEqual(blurred.count, sharp.count)
         for k in 5..<20 {
-            let before = centroids[2 * k]
-            let middle = centroids[2 * k + 1]
-            let after = centroids[2 * k + 2]
-            let expected: Double = (before.x + after.x) / 2
-            XCTAssertEqual(middle.x, expected, accuracy: 2.5, "コマ \(2 * k + 1)")
-            // 二重にぼやけていない（明るい画素が元のコマと同じくらいある）
-            XCTAssertGreaterThan(Double(middle.count), Double(before.count) * 0.7, "コマ \(2 * k + 1)")
+            // 360° のシャッターなら、1 コマに動く 8 画素ぶん横に伸び、位置（重心）は変わらない
+            XCTAssertGreaterThanOrEqual(blurred[k].rowWidth, sharp[k].rowWidth + 4, "コマ \(k)")
+            XCTAssertEqual(blurred[k].centroid, sharp[k].centroid, accuracy: 3, "コマ \(k)")
         }
+    }
+
+    func testCompositionPlaysTheRetimedFrames() async throws {
+        let source: URL = try await makeMovingSquare(frames: 30, fps: 30)
+        let asset: MediaAsset = try await MediaStore.shared.importFile(at: source, copy: true)
+        var project = Project(name: "retime", canvas: CanvasSettings(aspect: .landscape4x3, shortSide: 240, fps: 30))
+        project.media.append(asset)
+        var clip: Clip = project.makeClip(for: asset)
+        clip.speed = SpeedSettings(rate: 0.5)
+        clip.duration = Time(seconds: 1.8)
+        clip.speed.interpolation = .opticalFlow
+        project.appendToMain(clip)
+        let placed: Clip = try XCTUnwrap(project.tracks[try XCTUnwrap(project.mainTrackIndex)].clips.first)
+        XCTAssertTrue(MediaJobs.needsRetime(placed, asset: asset, fps: 30))
+        let path: String = try await MediaJobs.makeRetimed(clip: placed, asset: asset, fps: 30)
+        XCTAssertEqual(path, RetimePlan.cachePath(clip: placed, asset: asset, fps: 30))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: AppPaths.media.appendingPathComponent(path).path))
+        // もう一度頼んでも作り直さない（同じファイル）
+        let again: String = try await MediaJobs.makeRetimed(clip: placed, asset: asset, fps: 30)
+        XCTAssertEqual(again, path)
+
+        var options = CompositionBuilder.Options()
+        options.includeAudio = false
+        let built: CompositionBuilder.Result = try await CompositionBuilder().build(project: project, options: options)
+        let reader = try AVAssetReader(asset: built.composition)
+        var attributes: [String: Any] = [:]
+        attributes[kCVPixelBufferPixelFormatTypeKey as String] = kCVPixelFormatType_32BGRA
+        let output = AVAssetReaderVideoCompositionOutput(videoTracks: built.composition.tracks(withMediaType: .video), videoSettings: attributes)
+        output.videoComposition = built.videoComposition
+        reader.add(output)
+        XCTAssertTrue(reader.startReading())
+        var frames: [FrameInfo] = []
+        while let sample = output.copyNextSampleBuffer() {
+            guard let buffer = CMSampleBufferGetImageBuffer(sample) else { continue }
+            frames.append(inspect(buffer, time: CMSampleBufferGetPresentationTimeStamp(sample).seconds))
+        }
+        XCTAssertGreaterThanOrEqual(frames.count, 50)
+        // 合成の出力でも、間のコマが前後のちょうど真ん中にある（作ったコマを 1 コマずつ使っている）
+        for k in 5..<24 {
+            let middle: FrameInfo = frames[2 * k + 1]
+            let expected: Double = (frames[2 * k].centroid + frames[2 * k + 2].centroid) / 2
+            XCTAssertEqual(middle.centroid, expected, accuracy: 2.5, "コマ \(2 * k + 1)")
+            XCTAssertGreaterThan(frames[2 * k + 2].centroid - frames[2 * k].centroid, 5, "コマ \(2 * k)")
+        }
+    }
+
+    private func distance(_ a: [Double], _ b: [Double]) -> Double {
+        var sum: Double = 0
+        for i in 0..<min(a.count, b.count) { sum += abs(a[i] - b[i]) }
+        return sum / Double(max(1, min(a.count, b.count)))
     }
 }
 #endif

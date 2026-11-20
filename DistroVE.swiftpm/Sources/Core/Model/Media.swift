@@ -20,21 +20,6 @@ enum MediaStorage: String, Codable, Sendable {
     case generated
 }
 
-/// オプティカルフローでコマの間を足した動画（Q99）。素材の range の部分だけを factor 倍のコマ数にしたもの。
-struct InterpolatedMedia: Hashable, Codable, Sendable {
-    /// Media フォルダーからの相対パス
-    var path: String
-    var factor: Int
-    /// 元の素材の中の範囲（ファイルの 0 秒が range.start に当たる）
-    var range: TimeRange
-
-    /// 素材の source の範囲をすべて含み、コマ数も足りているか。
-    func covers(_ source: TimeRange, factor wanted: Int) -> Bool {
-        let tolerance: Time = Time(seconds: 0.02)
-        return factor >= wanted && source.start + tolerance >= range.start && source.end <= range.end + tolerance
-    }
-}
-
 /// プロジェクトに取り込んだ素材。
 struct MediaAsset: Identifiable, Hashable, Codable, Sendable {
     var id: UUID
@@ -59,7 +44,6 @@ struct MediaAsset: Identifiable, Hashable, Codable, Sendable {
     var proxyPath: String?
     /// 逆再生用に作った動画の相対パス
     var reversedPath: String?
-    var interpolated: InterpolatedMedia?
     var importedAt: Date
     /// 内蔵素材の識別子（内蔵 BGM など）
     var libraryID: String?
@@ -81,7 +65,6 @@ struct MediaAsset: Identifiable, Hashable, Codable, Sendable {
         self.fileSize = 0
         self.proxyPath = nil
         self.reversedPath = nil
-        self.interpolated = nil
         self.importedAt = Date()
         self.libraryID = nil
     }

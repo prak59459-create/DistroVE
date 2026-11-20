@@ -44,24 +44,29 @@ final class AdaptivityTests: XCTestCase {
         XCTAssertTrue(EditorLevel.beginner < EditorLevel.pro)
     }
 
-    func testSmoothSlowMotionSettings() throws {
-        let old: SpeedSettings = try JSONDecoder().decode(SpeedSettings.self, from: Data("{\"rate\":0.5}".utf8))
-        XCTAssertFalse(old.smooth)
-        XCTAssertEqual(old.suggestedInterpolationFactor, 4)
+    func testInterpolationSettingsAndOldFiles() throws {
+        // 以前の「なめらかスロー」は光学フローとして読む
+        let old: SpeedSettings = try JSONDecoder().decode(SpeedSettings.self, from: Data("{\"rate\":0.5,\"smooth\":true}".utf8))
+        XCTAssertEqual(old.interpolation, .opticalFlow)
+        XCTAssertTrue(old.smooth)
+        XCTAssertEqual(old.motionBlur, 0)
+        let plain: SpeedSettings = try JSONDecoder().decode(SpeedSettings.self, from: Data("{\"rate\":0.5}".utf8))
+        XCTAssertEqual(plain.interpolation, .sampling)
+        XCTAssertFalse(plain.makesFrames)
         var curve = SpeedSettings()
         curve.curve = [SpeedPoint(0, 1), SpeedPoint(0.5, 0.2), SpeedPoint(1, 1)]
         XCTAssertEqual(curve.slowestRate, 0.2, accuracy: 1e-9)
-        XCTAssertEqual(curve.suggestedInterpolationFactor, 8)
-        XCTAssertEqual(SpeedSettings(rate: 0.9).suggestedInterpolationFactor, 2)
-
-        let made = InterpolatedMedia(path: "Interpolated/a.mov", factor: 4, range: TimeRange(start: Time(seconds: 1), duration: Time(seconds: 3)))
-        XCTAssertTrue(made.covers(TimeRange(start: Time(seconds: 1.5), duration: Time(seconds: 2)), factor: 4))
-        XCTAssertFalse(made.covers(TimeRange(start: Time(seconds: 0.5), duration: Time(seconds: 2)), factor: 4))
-        XCTAssertFalse(made.covers(TimeRange(start: Time(seconds: 1.5), duration: Time(seconds: 2)), factor: 8))
-        var asset = MediaAsset(kind: .video, name: "v", storage: .copied)
-        asset.interpolated = made
-        let decoded: MediaAsset = try JSONDecoder().decode(MediaAsset.self, from: try JSONEncoder().encode(asset))
-        XCTAssertEqual(decoded.interpolated, made)
+        curve.interpolation = .blending
+        curve.motionBlur = 0.5
+        let decoded: SpeedSettings = try JSONDecoder().decode(SpeedSettings.self, from: try JSONEncoder().encode(curve))
+        XCTAssertEqual(decoded, curve)
+        XCTAssertTrue(decoded.makesFrames)
+        // 以前の素材の記録（interpolated）があっても読める
+        let asset = MediaAsset(kind: .video, name: "v", storage: .copied)
+        var json: [String: Any] = try XCTUnwrap(JSONSerialization.jsonObject(with: try JSONEncoder().encode(asset)) as? [String: Any])
+        json["interpolated"] = ["path": "Interpolated/a.mov", "factor": 4]
+        let again: MediaAsset = try JSONDecoder().decode(MediaAsset.self, from: try JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(again.id, asset.id)
     }
 }
 

@@ -67,6 +67,8 @@ final class AppSettings: ObservableObject {
     @Published var toolbarAtTop: Bool { didSet { store(toolbarAtTop, "toolbarAtTop") } }
     @Published var copyMediaOnImport: Bool { didSet { store(copyMediaOnImport, "copyMediaOnImport") } }
     @Published var autoProxy: Bool { didSet { store(autoProxy, "autoProxy") } }
+    /// 速さを変えたクリップのコマ（光学フロー・コマの合成）を、編集が落ち着いたら自動で作る（Q99）
+    @Published var autoRetime: Bool { didSet { store(autoRetime, "autoRetime") } }
     @Published var allowServerSpeech: Bool { didSet { store(allowServerSpeech, "allowServerSpeech") } }
     @Published var hasSeenTutorial: Bool { didSet { store(hasSeenTutorial, "hasSeenTutorial") } }
     @Published var snapping: Bool { didSet { store(snapping, "snapping") } }
@@ -94,6 +96,7 @@ final class AppSettings: ObservableObject {
         toolbarAtTop = d.bool(forKey: "toolbarAtTop")
         copyMediaOnImport = d.object(forKey: "copyMediaOnImport") as? Bool ?? true
         autoProxy = d.object(forKey: "autoProxy") as? Bool ?? true
+        autoRetime = d.object(forKey: "autoRetime") as? Bool ?? true
         allowServerSpeech = d.bool(forKey: "allowServerSpeech")
         hasSeenTutorial = d.bool(forKey: "hasSeenTutorial")
         snapping = d.object(forKey: "snapping") as? Bool ?? true

@@ -12,8 +12,6 @@ final class MediaStore: @unchecked Sendable {
         case original
         case proxy
         case reversed
-        /// オプティカルフローでコマを足したもの（Q99）
-        case interpolated
         /// 逆再生の音声（Q34）
         case reversedAudio
     }
@@ -40,12 +38,6 @@ final class MediaStore: @unchecked Sendable {
         case .reversedAudio:
             if let path = asset.reversedPath {
                 let url: URL = AppPaths.media.appendingPathComponent(MediaJobs.reversedAudioPath(path))
-                if FileManager.default.fileExists(atPath: url.path) { return url }
-            }
-            return nil
-        case .interpolated:
-            if let path = asset.interpolated?.path {
-                let url: URL = AppPaths.media.appendingPathComponent(path)
                 if FileManager.default.fileExists(atPath: url.path) { return url }
             }
             return nil
@@ -297,9 +289,6 @@ final class MediaStore: @unchecked Sendable {
         if let reversed = asset.reversedPath {
             try? FileManager.default.removeItem(at: AppPaths.media.appendingPathComponent(reversed))
             try? FileManager.default.removeItem(at: AppPaths.media.appendingPathComponent(MediaJobs.reversedAudioPath(reversed)))
-        }
-        if let smooth = asset.interpolated?.path {
-            try? FileManager.default.removeItem(at: AppPaths.media.appendingPathComponent(smooth))
         }
     }
 }

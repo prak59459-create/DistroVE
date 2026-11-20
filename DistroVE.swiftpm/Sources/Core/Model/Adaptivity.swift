@@ -18,7 +18,7 @@ enum DeviceTier: String, Codable, CaseIterable, Sendable {
         switch self {
         case .light: return "プレビューを 1/2 にし、フル HD 以上の動画は軽い代替動画（プロキシ）で編集します。"
         case .standard: return "4K の動画はプロキシで編集します。"
-        case .high: return "8K 以外はそのまま編集し、なめらかスローを最も細かく作ります。"
+        case .high: return "8K 以外はそのまま編集し、光学フローのコマを最も細かく作ります。"
         }
     }
 

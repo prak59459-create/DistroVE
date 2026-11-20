@@ -29,27 +29,65 @@ struct ClipParamRow: View {
     }
 }
 
-/// なめらかスロー（Q99）。オプティカルフローでコマの間を作る。
-struct SmoothSlowMotionRow: View {
+/// コマの間の作り方（Q99: コマの繰り返し・コマの合成・光学フロー）とモーションブラー。
+/// スロー・速度カーブ・素材とプロジェクトのフレームレートの違いのどれにも効く。
+struct FrameInterpolationRows: View {
     @ObservedObject var controller: EditorController
     let clip: Clip
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Toggle("なめらかスロー（オプティカルフロー）", isOn: Binding<Bool>(get: { clip.speed.smooth },
-                                                              set: { v in controller.setSmoothSlowMotion(v) }))
-                .font(.footnote)
-            Text(detail)
+        VStack(alignment: .leading, spacing: 6) {
+            PanelTitle(text: "コマの補間")
+            ChipPicker(items: FrameInterpolation.allCases, selection: clip.speed.interpolation, label: { $0.label }) { mode in
+                controller.setInterpolation(mode)
+            }
+            Text(clip.speed.interpolation.detail)
                 .font(.caption2)
                 .foregroundStyle(Theme.subtext)
+            PanelTitle(text: "モーションブラー")
+            ChipPicker(items: MotionBlur.choices, selection: FrameInterpolationRows.nearest(clip.speed.motionBlur),
+                       label: { MotionBlur.label($0) }) { value in
+                controller.setMotionBlur(value)
+            }
+            status
         }
     }
 
-    private var detail: String {
-        if clip.speed.smooth, let asset = controller.project.asset(clip.mediaID), let made = asset.interpolated {
-            return "コマを \(made.factor) 倍に増やしています（端末内で作成）"
+    static func nearest(_ value: Double) -> Double {
+        var best: Double = MotionBlur.choices[0]
+        for choice in MotionBlur.choices where abs(choice - value) < abs(best - value) {
+            best = choice
         }
-        return "スローにしたとき、前後のコマから動きを読んで間のコマを作ります。作るのに時間がかかります。"
+        return best
+    }
+
+    @ViewBuilder private var status: some View {
+        let fps: Int = Int(controller.project.canvas.fps.rounded())
+        let state: RetimeStatus = controller.retimeRevision >= 0 ? controller.retimeStatus(of: clip) : .notNeeded
+        switch state {
+        case .notNeeded:
+            if clip.speed.makesFrames {
+                note("今の速さとフレームレートでは、素材のコマをそのまま使います。", icon: "checkmark.circle")
+            }
+        case .ready:
+            note("\(fps)fps のコマを作成済みです。書き出しのフレームレートが違うときは書き出しの前に作ります。", icon: "checkmark.circle.fill")
+        case .missing:
+            HStack(spacing: 8) {
+                note("まだ作っていません（プレビューはコマの繰り返しです）", icon: "hourglass")
+                Spacer(minLength: 4)
+                Button("コマを作る") { controller.makeRetimed(clip.id) }
+                    .buttonStyle(.borderedProminent)
+                    .font(.caption)
+            }
+        case .needsReverse:
+            note("逆再生の準備が終わると作れます", icon: "arrow.uturn.backward")
+        }
+    }
+
+    private func note(_ text: String, icon: String) -> some View {
+        Label(text, systemImage: icon)
+            .font(.caption2)
+            .foregroundStyle(Theme.subtext)
     }
 }
 
@@ -164,7 +202,7 @@ struct SpeedPanel: View {
                                                      set: { v in controller.updateSelected("声の高さ") { $0.speed.preservePitch = v } }))
                     .font(.footnote)
                 if clip.kind == .video {
-                    SmoothSlowMotionRow(controller: controller, clip: clip)
+                    FrameInterpolationRows(controller: controller, clip: clip)
                     HStack {
                         Button(clip.speed.reversed ? "逆再生を解除" : "逆再生") { controller.toggleReverse() }
                         Button("静止（2 秒）") { controller.freezeFrame() }

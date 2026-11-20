@@ -142,6 +142,10 @@ final class EditorController: ObservableObject {
     private var rebuildTask: Task<Void, Never>?
     private var saveTask: Task<Void, Never>?
     private var jobTask: Task<Void, Never>?
+    /// 速さを変えたクリップのコマを、編集が落ち着いてから作るための待ち（Q99）
+    var retimeTask: Task<Void, Never>?
+    /// コマのファイルができるたびに増える（パネルの表示を更新するため）
+    @Published var retimeRevision: Int = 0
     private var timeObserver: Any?
     private var lastBackup: Date = Date()
     private var observers: [NSObjectProtocol] = []
@@ -338,6 +342,7 @@ final class EditorController: ObservableObject {
             return
         }
         rebuildTask?.cancel()
+        if key != builtKey { scheduleAutoRetime() }
         let snapshot: Project = project
         let scale: Double = effectiveScale
         let proxies: Bool = useProxies
@@ -606,7 +611,6 @@ struct TimingKey: Equatable {
             var parts: [String] = [asset.id.uuidString]
             if let p = asset.proxyPath { parts.append(p) }
             if let p = asset.reversedPath { parts.append(p) }
-            if let p = asset.interpolated?.path { parts.append(p) }
             mediaKeys.append(parts.joined(separator: "|"))
         }
         media = mediaKeys

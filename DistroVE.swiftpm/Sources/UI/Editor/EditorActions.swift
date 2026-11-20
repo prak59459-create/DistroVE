@@ -105,30 +105,84 @@ extension EditorController {
         }
     }
 
-    /// なめらかスロー（Q99）。コマの足りないときは、使う範囲だけをオプティカルフローで作ってから使う。
+    // MARK: コマの間（Q99: 光学フロー・コマの合成・モーションブラー）
+
+    /// コマの間の作り方を変える。コマのファイルが要れば作り始める。
+    func setInterpolation(_ mode: FrameInterpolation) {
+        guard let clip = selectedClip, clip.kind == .video else { return }
+        updateSelected("コマの補間") { $0.speed.interpolation = mode }
+        makeRetimed(clip.id)
+    }
+
+    func setMotionBlur(_ shutter: Double) {
+        guard let clip = selectedClip, clip.kind == .video else { return }
+        updateSelected("モーションブラー") { $0.speed.motionBlur = shutter }
+        makeRetimed(clip.id)
+    }
+
+    /// 以前の「なめらかスロー」のオン・オフ（光学フローにする・やめる）。
     func setSmoothSlowMotion(_ on: Bool) {
-        guard let clip = selectedClip, clip.kind == .video, let asset = project.asset(clip.mediaID) else { return }
-        if !on {
-            updateSelected("なめらかスローを解除") { $0.speed.smooth = false }
+        setInterpolation(on ? .opticalFlow : .sampling)
+    }
+
+    /// プロジェクトのフレームレートで、コマのファイルができているか。
+    func retimeStatus(of clip: Clip) -> RetimeStatus {
+        guard clip.kind == .video, clip.speed.makesFrames, let asset = project.asset(clip.mediaID) else { return .notNeeded }
+        if !MediaJobs.needsRetime(clip, asset: asset, fps: project.canvas.fps) { return .notNeeded }
+        let path: String = RetimePlan.cachePath(clip: clip, asset: asset, fps: project.canvas.fps)
+        if FileManager.default.fileExists(atPath: AppPaths.media.appendingPathComponent(path).path) { return .ready }
+        if clip.speed.reversed && asset.reversedPath == nil { return .needsReverse }
+        return .missing
+    }
+
+    /// クリップのコマを作る。automatic なら、ほかの処理の最中は黙って見送る。
+    func makeRetimed(_ id: UUID, automatic: Bool = false) {
+        guard let clip = project.clip(id), let asset = project.asset(clip.mediaID) else { return }
+        let status: RetimeStatus = retimeStatus(of: clip)
+        if status == .needsReverse {
+            if !automatic { showToast("逆再生の準備が終わってから作れます") }
             return
         }
-        let factor: Int = clip.speed.suggestedInterpolationFactor
-        let source = TimeRange(start: clip.sourceStart, duration: clip.sourceDuration)
-        if let made = asset.interpolated, made.covers(source, factor: factor) {
-            updateSelected("なめらかスロー") { $0.speed.smooth = true }
+        if status != .missing { return }
+        if job != nil {
+            if !automatic { showToast("ほかの処理が終わるまでお待ちください") }
             return
         }
-        let margin: Time = Time(seconds: 0.5)
-        let start: Time = max(.zero, source.start - margin)
-        let limit: Time = asset.duration.isPositive ? asset.duration : source.end + margin
-        let range = TimeRange(start: start, end: min(limit, source.end + margin))
-        let id: UUID = clip.id
-        runJob("なめらかスローの準備") { controller, progress in
-            let made: InterpolatedMedia = try await MediaJobs.makeInterpolated(for: asset, range: range, factor: factor, progress: progress)
-            controller.apply("なめらかスロー") { p in
-                if let index = p.media.firstIndex(where: { $0.id == asset.id }) { p.media[index].interpolated = made }
-                p.updateClip(id) { $0.speed.smooth = true }
+        let fps: Double = project.canvas.fps
+        let title: String = clip.speed.interpolation == .blending ? "コマの合成" : "光学フローでコマを作成"
+        runJob(title) { controller, progress in
+            _ = try await MediaJobs.makeRetimed(clip: clip, asset: asset, fps: fps, progress: progress)
+            controller.retimeRevision += 1
+            controller.requestRebuild(immediately: true)
+            // ほかにも作るクリップがあれば続けて作る
+            controller.scheduleAutoRetime(delay: 0.3)
+        }
+    }
+
+    /// 速さ・長さ・フレームレートを変えて、作り直しの要るクリップができたら、少し待ってから作る（設定でオフにできる）。
+    func scheduleAutoRetime(delay: Double = 1.2) {
+        if UserDefaults.standard.object(forKey: "autoRetime") as? Bool == false { return }
+        retimeTask?.cancel()
+        retimeTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            if Task.isCancelled { return }
+            self?.startNextRetime()
+        }
+    }
+
+    private func startNextRetime() {
+        if job != nil { return }
+        // 選んでいるクリップを先に
+        var candidates: [Clip] = []
+        if let selected = selectedClip { candidates.append(selected) }
+        for index in project.trackIndices(of: .video) where !project.tracks[index].isHidden {
+            for clip in project.tracks[index].clips where clip.kind == .video && clip.speed.makesFrames {
+                candidates.append(clip)
             }
+        }
+        for clip in candidates where retimeStatus(of: clip) == .missing {
+            makeRetimed(clip.id, automatic: true)
+            return
         }
     }
 

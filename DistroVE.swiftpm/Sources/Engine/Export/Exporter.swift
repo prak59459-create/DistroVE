@@ -30,6 +30,10 @@ final class Exporter: @unchecked Sendable {
     // MARK: MP4
 
     func exportVideo(project: Project, settings: ExportSettings, to url: URL, progress: @escaping @Sendable (Double) -> Void) async throws {
+        // 速さを変えたクリップのコマを、書き出すフレームレートで先に作る（Q99）
+        let share: Double = try await prepareRetimed(project: project, fps: Double(settings.fps), progress: progress)
+        let rest: Double = 1 - share
+        let report: @Sendable (Double) -> Void = { value in progress(share + rest * value) }
         let size: (width: Int, height: Int) = settings.outputSize(canvasWidth: project.canvas.width, canvasHeight: project.canvas.height)
         var options = CompositionBuilder.Options()
         options.renderSize = CGSize(width: size.width, height: size.height)
@@ -48,10 +52,49 @@ final class Exporter: @unchecked Sendable {
             throw EngineError.exportFailed(sink.writer.error?.localizedDescription ?? "書き込みを始められません")
         }
         sink.writer.startSession(atSourceTime: range.start)
-        let job = TranscodeJob(source: source, sink: sink, url: url, range: range, cancelFlag: cancelled, progress: progress)
+        let job = TranscodeJob(source: source, sink: sink, url: url, range: range, cancelFlag: cancelled, progress: report)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             job.run(continuation)
         }
+    }
+
+    /// 速さを変えたクリップ（光学フロー・コマの合成・モーションブラー）のコマを、書き出すフレームレートで作っておく。
+    /// 進み具合のうち、ここで使った割合を返す。作れなかったクリップはコマの繰り返しで書き出す。
+    private func prepareRetimed(project: Project, fps: Double, progress: @escaping @Sendable (Double) -> Void) async throws -> Double {
+        var work: [(clip: Clip, asset: MediaAsset, frames: Int)] = []
+        var total: Int = 0
+        for index in project.trackIndices(of: .video) where !project.tracks[index].isHidden {
+            for clip in project.tracks[index].clips where clip.kind == .video && clip.speed.makesFrames {
+                guard let asset = project.asset(clip.mediaID) else { continue }
+                let plan = RetimePlan(clip: clip, asset: asset, fps: fps)
+                if !plan.isNeeded(sourceFPS: asset.frameRate) { continue }
+                if FileManager.default.fileExists(atPath: AppPaths.media.appendingPathComponent(plan.cachePath).path) { continue }
+                work.append((clip, asset, plan.frames.count))
+                total += plan.frames.count
+            }
+        }
+        if work.isEmpty || total == 0 { return 0 }
+        let share: Double = 0.6
+        var done: Int = 0
+        let flag: Locked<Bool> = cancelled
+        for item in work {
+            if isCancelled { throw EngineError.cancelled }
+            let offset: Int = done
+            let count: Int = item.frames
+            let report: @Sendable (Double) -> Void = { value in
+                progress(share * (Double(offset) + value * Double(count)) / Double(total))
+            }
+            do {
+                _ = try await MediaJobs.makeRetimed(clip: item.clip, asset: item.asset, fps: fps, progress: report,
+                                                    isCancelled: { flag.get() })
+            } catch EngineError.cancelled {
+                throw EngineError.cancelled
+            } catch {
+                Diagnostics.shared.log("retime before export failed: \(error)")
+            }
+            done += count
+        }
+        return share
     }
 
     /// 読み込み側。合成した映像（と音）を取り出す出口を用意する。

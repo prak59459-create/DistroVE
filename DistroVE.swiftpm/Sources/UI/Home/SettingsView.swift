@@ -79,6 +79,7 @@ struct SettingsView: View {
         Section("素材") {
             Toggle("取り込むときにコピーする（オフで参照のみ）", isOn: $settings.copyMediaOnImport)
             Toggle("重い素材は自動でプロキシを作る", isOn: $settings.autoProxy)
+            Toggle("光学フロー・コマの合成のコマを自動で作る", isOn: $settings.autoRetime)
         }
     }
 

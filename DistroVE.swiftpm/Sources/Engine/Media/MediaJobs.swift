@@ -46,22 +46,44 @@ enum MediaJobs {
         return output
     }
 
-    /// なめらかスロー用（Q99）。素材の range の部分を、オプティカルフローで factor 倍のコマ数にする。
-    static func makeInterpolated(for asset: MediaAsset, range: TimeRange, factor: Int,
-                                 progress: (@Sendable (Double) -> Void)? = nil) async throws -> InterpolatedMedia {
-        guard let url = MediaStore.shared.url(for: asset) else { throw EngineError.missingMedia(asset.name) }
+    /// 速さを変えたクリップのコマを作る（Q99: 光学フロー・コマの合成・モーションブラー）。fps はタイムライン（または書き出し）のフレームレート。
+    /// 作ったファイルは同じ条件なら同じ名前（RetimePlan.cachePath）になるので、作り直しや元に戻したときにそのまま使える。戻り値はその相対パス。
+    static func makeRetimed(clip: Clip, asset: MediaAsset, fps: Double,
+                            progress: (@Sendable (Double) -> Void)? = nil,
+                            isCancelled: (@Sendable () -> Bool)? = nil) async throws -> String {
+        let plan = RetimePlan(clip: clip, asset: asset, fps: fps)
+        let target: URL = AppPaths.media.appendingPathComponent(plan.cachePath)
+        if FileManager.default.fileExists(atPath: target.path) { return plan.cachePath }
+        let variant: MediaStore.Variant = clip.speed.reversed ? .reversed : .original
+        guard let url = MediaStore.shared.url(for: asset, variant: variant) else {
+            if clip.speed.reversed { throw EngineError.unsupported("逆再生の準備ができていません") }
+            throw EngineError.missingMedia(asset.name)
+        }
         #if canImport(Vision)
-        guard let interpolator = FrameInterpolator.shared else { throw EngineError.unsupported("この端末ではなめらかスローを作れません") }
-        let folder: URL = AppPaths.media.appendingPathComponent("Interpolated", isDirectory: true)
+        guard let interpolator = FrameInterpolator.shared else { throw EngineError.unsupported("この端末ではコマを作れません") }
+        let folder: URL = AppPaths.media.appendingPathComponent(RetimePlan.folder, isDirectory: true)
         AppPaths.ensure(folder)
-        let name: String = asset.id.uuidString + "-\(factor)x.mov"
-        let output: URL = folder.appendingPathComponent(name)
-        try await interpolator.interpolate(url: url, range: range, factor: factor, accuracy: DevicePerformance.current.flowAccuracy,
-                                           output: output, progress: progress)
-        return InterpolatedMedia(path: "Interpolated/" + name, factor: factor, range: range)
+        // 途中で止めても壊れたファイルが残らないよう、別の名前で作ってから置き換える
+        let working: URL = folder.appendingPathComponent("working-" + UUID().uuidString + ".mov")
+        do {
+            try await interpolator.render(plan: plan, url: url, accuracy: DevicePerformance.current.flowAccuracy,
+                                          output: working, progress: progress, isCancelled: isCancelled)
+        } catch {
+            try? FileManager.default.removeItem(at: working)
+            throw error
+        }
+        try? FileManager.default.removeItem(at: target)
+        try FileManager.default.moveItem(at: working, to: target)
+        return plan.cachePath
         #else
-        throw EngineError.unsupported("この端末ではなめらかスローを作れません")
+        throw EngineError.unsupported("この端末ではコマを作れません")
         #endif
+    }
+
+    /// clip を fps で再生・書き出すときに、作ったコマのファイルが要るか（コマの繰り返しで足りるなら要らない）。
+    static func needsRetime(_ clip: Clip, asset: MediaAsset, fps: Double) -> Bool {
+        if clip.kind != .video || !clip.speed.makesFrames { return false }
+        return RetimePlan(clip: clip, asset: asset, fps: fps).isNeeded(sourceFPS: asset.frameRate)
     }
 
     /// 逆再生用の動画を作る（Q34）。メモリを抑えるため、後ろから短い区間ずつ読んで逆順に書く。音声は別のファイル（-audio.caf）に逆順で書く。

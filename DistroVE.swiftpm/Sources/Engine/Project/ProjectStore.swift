@@ -256,11 +256,14 @@ final class ProjectStore: @unchecked Sendable {
                     used.insert(p)
                     used.insert(MediaJobs.reversedAudioPath(p))
                 }
-                if let p = asset.interpolated?.path { used.insert(p) }
             }
             for track in project.tracks {
                 for clip in track.clips {
                     if let p = clip.audio.processing.renderedPath { used.insert(p) }
+                    // 速さを変えたクリップのコマ（Q99）。プロジェクトと書き出しのフレームレートのぶんを残す
+                    if clip.kind == .video, clip.speed.makesFrames, let asset = project.asset(clip.mediaID) {
+                        for path in ProjectStore.retimedPaths(clip, asset: asset, projectFPS: project.canvas.fps) { used.insert(path) }
+                    }
                 }
             }
         }
@@ -277,10 +280,25 @@ final class ProjectStore: @unchecked Sendable {
                 if relative.hasPrefix("/") { relative.removeFirst() }
             }
             if used.contains(relative) { continue }
+            // 作っている途中のコマのファイルは消さない
+            if url.lastPathComponent.hasPrefix("working-") { continue }
             freed += AppPaths.fileSize(url)
             try? FileManager.default.removeItem(at: url)
         }
         return freed
+    }
+
+    /// 速さを変えたクリップのために作ったコマのファイル（プロジェクトと、書き出しで選べるフレームレートのぶん）。
+    static func retimedPaths(_ clip: Clip, asset: MediaAsset, projectFPS: Double) -> [String] {
+        var rates: [Double] = [projectFPS]
+        for rate in ExportSettings.frameRates where abs(Double(rate) - projectFPS) > 0.001 {
+            rates.append(Double(rate))
+        }
+        var paths: [String] = []
+        for rate in rates {
+            paths.append(RetimePlan.cachePath(clip: clip, asset: asset, fps: rate))
+        }
+        return paths
     }
 }
 #endif
