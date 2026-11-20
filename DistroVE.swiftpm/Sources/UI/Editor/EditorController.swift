@@ -602,7 +602,12 @@ struct TimingKey: Equatable {
         tracks = trackKeys
         var mediaKeys: [String] = []
         for asset in project.media {
-            mediaKeys.append(asset.id.uuidString + (asset.proxyPath ?? "") + (asset.reversedPath ?? "") + (asset.interpolated?.path ?? ""))
+            // 文字列の + と ?? を 1 つの式に並べると型チェックがとても重くなるので分ける
+            var parts: [String] = [asset.id.uuidString]
+            if let p = asset.proxyPath { parts.append(p) }
+            if let p = asset.reversedPath { parts.append(p) }
+            if let p = asset.interpolated?.path { parts.append(p) }
+            mediaKeys.append(parts.joined(separator: "|"))
         }
         media = mediaKeys
         self.scale = scale

@@ -119,22 +119,36 @@ struct Object3DMaterialSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             PanelTitle(text: "材質")
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack {
-                    ForEach(Material3D.presets, id: \.name) { preset in
-                        Button(preset.name) { controller.update3D("材質") { $0.material = preset.material } }
-                            .buttonStyle(.bordered)
-                            .tint(content.material == preset.material ? Theme.accent : nil)
+            presets
+            colors
+            sliders
+        }
+    }
+
+    private var presets: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack {
+                ForEach(Material3D.presets, id: \.name) { preset in
+                    LookChoice(title: preset.name, isSelected: content.material == preset.material) {
+                        controller.update3D("材質") { $0.material = preset.material }
                     }
                 }
             }
-            .font(.caption)
-            HStack {
-                colorPicker(content.kind == .text ? "表の色" : "色", content.material.color) { $0.material.color = $1 }
-                if content.kind == .text {
-                    colorPicker("側面の色", content.material.sideColor) { $0.material.sideColor = $1 }
-                }
+        }
+        .font(.caption)
+    }
+
+    private var colors: some View {
+        HStack {
+            colorPicker(content.kind == .text ? "表の色" : "色", content.material.color) { $0.material.color = $1 }
+            if content.kind == .text {
+                colorPicker("側面の色", content.material.sideColor) { $0.material.sideColor = $1 }
             }
+        }
+    }
+
+    private var sliders: some View {
+        VStack(alignment: .leading, spacing: 6) {
             ParamRow(label: "金属", range: 0...1, value: content.material.metallic,
                      onChange: { v in controller.update3D("金属", coalesce: "3d-metal") { $0.material.metallic = v } })
             ParamRow(label: "ざらつき", range: 0...1, value: content.material.roughness,

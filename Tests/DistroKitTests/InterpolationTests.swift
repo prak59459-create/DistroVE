@@ -103,7 +103,8 @@ final class InterpolationTests: XCTestCase {
         try await interpolator.interpolate(url: source, range: range, factor: 2, accuracy: .high, output: output, progress: nil)
 
         let asset = AVURLAsset(url: output)
-        let track: AVAssetTrack = try XCTUnwrap(try await asset.loadTracks(withMediaType: .video).first)
+        let videoTracks: [AVAssetTrack] = try await asset.loadTracks(withMediaType: .video)
+        let track: AVAssetTrack = try XCTUnwrap(videoTracks.first)
         let reader = try AVAssetReader(asset: asset)
         var attributes: [String: Any] = [:]
         attributes[kCVPixelBufferPixelFormatTypeKey as String] = kCVPixelFormatType_32BGRA

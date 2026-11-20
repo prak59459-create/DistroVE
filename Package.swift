@@ -19,7 +19,9 @@ let package = Package(
         .testTarget(
             name: "DistroKitTests",
             dependencies: ["DistroKit"],
-            path: "Tests/DistroKitTests"
+            path: "Tests/DistroKitTests",
+            // MKV・WebM・AVI の見本（ffmpeg で作った 1 秒・96x64 の小さなファイル）
+            resources: [.copy("Fixtures")]
         )
     ]
 )
