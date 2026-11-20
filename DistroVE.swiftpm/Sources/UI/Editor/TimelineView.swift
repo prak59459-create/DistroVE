@@ -941,27 +941,27 @@ final class ClipAccessibilityElement: UIAccessibilityElement {
 
     @MainActor
     static func actions(_ id: UUID, controller: EditorController) -> [UIAccessibilityCustomAction] {
-        weak var target: EditorController? = controller
+        let target = WeakReference(controller)
         let split = UIAccessibilityCustomAction(name: "再生位置で分割") { _ in
             MainActor.assumeIsolated {
-                target?.select(id)
-                target?.splitAtPlayhead()
+                target.value?.select(id)
+                target.value?.splitAtPlayhead()
                 UIAccessibility.post(notification: .layoutChanged, argument: nil)
             }
             return true
         }
         let duplicate = UIAccessibilityCustomAction(name: "複製") { _ in
             MainActor.assumeIsolated {
-                target?.select(id)
-                target?.duplicateSelection()
+                target.value?.select(id)
+                target.value?.duplicateSelection()
                 UIAccessibility.post(notification: .layoutChanged, argument: nil)
             }
             return true
         }
         let remove = UIAccessibilityCustomAction(name: "削除") { _ in
             MainActor.assumeIsolated {
-                target?.select(id)
-                target?.deleteSelection(ripple: false)
+                target.value?.select(id)
+                target.value?.deleteSelection(ripple: false)
                 UIAccessibility.post(notification: .layoutChanged, argument: nil)
             }
             return true

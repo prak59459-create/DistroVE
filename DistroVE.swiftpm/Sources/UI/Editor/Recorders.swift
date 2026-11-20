@@ -194,7 +194,9 @@ final class NarrationModel: ObservableObject {
     private func begin() {
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetooth])
+            // Bluetooth のマイク（ハンズフリー）。iOS 26 で名前が allowBluetoothHFP に変わったので、値（0x4）で指定する
+            let bluetooth = AVAudioSession.CategoryOptions(rawValue: 0x4)
+            try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, bluetooth])
             try session.setActive(true)
             let target: URL = AppPaths.cacheFolder("Import").appendingPathComponent("narration-\(Int(Date().timeIntervalSince1970)).m4a")
             let settings: [String: Any] = [

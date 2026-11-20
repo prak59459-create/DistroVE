@@ -44,6 +44,15 @@ extension RGBA {
     }
 }
 
+/// 弱い参照の入れ物（並行処理の間で渡すため。弱い参照の変数を別の並行処理の中で読まないようにする）。
+final class WeakReference<Value: AnyObject>: @unchecked Sendable {
+    weak var value: Value?
+
+    init(_ value: Value) {
+        self.value = value
+    }
+}
+
 /// スレッド間で共有する値を NSLock で守る小さな入れ物。
 final class Locked<Value>: @unchecked Sendable {
     private let lock = NSLock()

@@ -248,15 +248,6 @@ struct ExportView: View {
     }
 }
 
-/// 弱い参照の入れ物（並行処理の間で渡すため）。
-final class WeakReference<Value: AnyObject>: @unchecked Sendable {
-    weak var value: Value?
-
-    init(_ value: Value) {
-        self.value = value
-    }
-}
-
 @MainActor
 final class ExportModel: ObservableObject {
     @Published var isExporting: Bool = false
