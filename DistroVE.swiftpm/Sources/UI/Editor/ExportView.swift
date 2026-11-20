@@ -248,6 +248,15 @@ struct ExportView: View {
     }
 }
 
+/// 弱い参照の入れ物（並行処理の間で渡すため）。
+final class WeakReference<Value: AnyObject>: @unchecked Sendable {
+    weak var value: Value?
+
+    init(_ value: Value) {
+        self.value = value
+    }
+}
+
 @MainActor
 final class ExportModel: ObservableObject {
     @Published var isExporting: Bool = false
@@ -267,10 +276,12 @@ final class ExportModel: ObservableObject {
         message = nil
         output = nil
         let started = Date()
+        // 進み具合は別の並行処理から届くので、弱い参照を入れ物ごと渡す（Swift 6 の決まり）
+        let box = WeakReference(self)
         task = Task { [weak self] in
             do {
                 try await exporter.export(project: project, settings: settings, to: url, progress: { value in
-                    Task { @MainActor [weak self] in self?.progress = value }
+                    Task { @MainActor in box.value?.progress = value }
                 })
                 self?.output = url
                 let seconds: Double = Date().timeIntervalSince(started)

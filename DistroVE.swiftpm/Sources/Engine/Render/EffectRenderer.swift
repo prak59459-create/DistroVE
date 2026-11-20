@@ -377,6 +377,9 @@ enum EffectRenderer {
             let faceA: CIImage = mapCorners(a, cubeCorners(faceB: false, angle: angle, canvas: canvas))
             let faceB: CIImage = mapCorners(b, cubeCorners(faceB: true, angle: angle, canvas: canvas))
             return faceB.composited(over: faceA.composited(over: black)).cropped(to: canvas)
+        case .smoothCut:
+            // 光学フローでつないだコマがまだ無いとき（作り終えると、その絵に置き換わる）
+            return dissolve(a, b, q, canvas)
         }
     }
 

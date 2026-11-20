@@ -226,6 +226,92 @@ struct RetimePlan: Equatable, Sendable {
     }
 }
 
+/// スムースカット（光学フローのトランジション）で作る短い動画の計画。切れ目をはさむ区間で、A から B へ変形させる（Premiere の Morph Cut と同じ考え方）。
+/// 作ったファイルはトランジションの区間（切れ目 − half 〜 切れ目 + half）のタイムラインのコマと 1 対 1 に対応する。
+struct SmoothCutPlan: Equatable, Sendable {
+    static let version: Int = 1
+
+    /// 区間の始まり（タイムライン）
+    let windowStart: Time
+    let duration: Time
+    /// 作るファイルの中の各コマの時刻（秒）と、変形の進み（0〜1）
+    let outputTimes: [Double]
+    let progress: [Double]
+    /// 区間の始まりで A が写すコマ・区間の終わりで B が写すコマ（それぞれの素材ファイルの中の秒）
+    let fromTime: Double
+    let toTime: Double
+    let fps: Double
+    let signature: String
+
+    var cachePath: String {
+        return RetimePlan.folder + "/morph-" + RetimePlan.hexHash(signature) + ".mov"
+    }
+
+    /// a の次に b があり、b にスムースカットが付いているとき。逆再生のクリップでは作らない。
+    init?(from a: Clip, to b: Clip, assetA: MediaAsset, assetB: MediaAsset, fps: Double) {
+        guard let transition = b.transitionIn, transition.kind == .smoothCut, a.end == b.start,
+              a.kind == .video, b.kind == .video, !a.speed.reversed, !b.speed.reversed else { return nil }
+        let limit: Int64 = min(transition.duration.ticks, min(a.duration.ticks, b.duration.ticks))
+        let half: Int64 = limit / 2
+        if half <= 0 { return nil }
+        let frameTicks: Int64 = max(1, Time.frameDuration(fps: fps).ticks)
+        let start: Int64 = b.start.ticks - half
+        let length: Int64 = half * 2
+        var times: [Double] = []
+        var steps: [Double] = []
+        var index: Int64 = start >= 0 ? (start + frameTicks - 1) / frameTicks : -((-start) / frameTicks)
+        while index * frameTicks < start + length {
+            let local: Int64 = index * frameTicks - start
+            if local >= 0 {
+                times.append(Double(local) / Double(Time.timescale))
+                // 両端でゆっくり、真ん中で速く変える
+                let p: Double = Num.clamp((Double(local) + Double(frameTicks) / 2) / Double(length), 0, 1)
+                steps.append(p * p * (3 - 2 * p))
+            }
+            index += 1
+        }
+        if times.isEmpty { return nil }
+        // 区間の端で絵が飛ばないよう、区間の始まりで A が写すコマから、区間の終わりで B が写すコマへ変形させる
+        let mapA = SpeedMap(settings: a.speed)
+        let mapB = SpeedMap(settings: b.speed)
+        let offsetA: Time = mapA.sourceOffset(atTimeline: a.duration - Time(ticks: half), timelineDuration: a.duration)
+        let offsetB: Time = mapB.sourceOffset(atTimeline: Time(ticks: half), timelineDuration: b.duration)
+        let fromTime: Double = (a.sourceStart + offsetA).seconds
+        let toTime: Double = (b.sourceStart + offsetB).seconds
+        self.windowStart = Time(ticks: start)
+        self.duration = Time(ticks: length)
+        self.outputTimes = times
+        self.progress = steps
+        self.fromTime = fromTime
+        self.toTime = toTime
+        self.fps = fps
+        let phase: Int64 = ((start % frameTicks) + frameTicks) % frameTicks
+        var parts: [String] = ["m\(SmoothCutPlan.version)", assetA.id.uuidString, assetB.id.uuidString]
+        parts.append("\(Int((fromTime * 60_000).rounded()))")
+        parts.append("\(Int((toTime * 60_000).rounded()))")
+        parts.append("\(length)")
+        parts.append("\(phase)")
+        parts.append("\(Int((fps * 1000).rounded()))")
+        self.signature = parts.joined(separator: "|")
+    }
+
+    /// プロジェクトのメイントラックにあるスムースカットの計画（a の id と b の id、素材）。
+    static func all(in project: Project, fps: Double) -> [(from: Clip, to: Clip, plan: SmoothCutPlan)] {
+        guard let main = project.mainTrackIndex else { return [] }
+        let clips: [Clip] = project.tracks[main].clips
+        var result: [(from: Clip, to: Clip, plan: SmoothCutPlan)] = []
+        if clips.count < 2 { return result }
+        for i in 1..<clips.count {
+            let a: Clip = clips[i - 1]
+            let b: Clip = clips[i]
+            guard b.transitionIn?.kind == .smoothCut, let assetA = project.asset(a.mediaID), let assetB = project.asset(b.mediaID),
+                  let plan = SmoothCutPlan(from: a, to: b, assetA: assetA, assetB: assetB, fps: fps) else { continue }
+            result.append((a, b, plan))
+        }
+        return result
+    }
+}
+
 /// 素材の中の、隣り合う 2 コマとその間の位置。
 struct FramePair: Equatable, Sendable {
     var first: Int

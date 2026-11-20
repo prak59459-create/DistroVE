@@ -73,7 +73,15 @@ final class Exporter: @unchecked Sendable {
                 total += plan.frames.count
             }
         }
-        if work.isEmpty || total == 0 { return 0 }
+        // スムースカットのコマ（1 つを 30 コマぶんの手間とみなす）
+        var morphs: [(plan: SmoothCutPlan, a: MediaAsset, b: MediaAsset)] = []
+        for item in SmoothCutPlan.all(in: project, fps: fps) {
+            if FileManager.default.fileExists(atPath: AppPaths.media.appendingPathComponent(item.plan.cachePath).path) { continue }
+            guard let a = project.asset(item.from.mediaID), let b = project.asset(item.to.mediaID) else { continue }
+            morphs.append((item.plan, a, b))
+            total += 30
+        }
+        if (work.isEmpty && morphs.isEmpty) || total == 0 { return 0 }
         let share: Double = 0.6
         var done: Int = 0
         let flag: Locked<Bool> = cancelled
@@ -94,6 +102,21 @@ final class Exporter: @unchecked Sendable {
                 Diagnostics.shared.log("retime before export failed: \(error)")
             }
             done += count
+        }
+        for item in morphs {
+            if isCancelled { throw EngineError.cancelled }
+            let offset: Int = done
+            let report: @Sendable (Double) -> Void = { value in
+                progress(share * (Double(offset) + value * 30) / Double(all))
+            }
+            do {
+                _ = try await MediaJobs.makeSmoothCut(item.plan, assetA: item.a, assetB: item.b, progress: report, isCancelled: { flag.get() })
+            } catch EngineError.cancelled {
+                throw EngineError.cancelled
+            } catch {
+                Diagnostics.shared.log("smooth cut before export failed: \(error)")
+            }
+            done += 30
         }
         return share
     }

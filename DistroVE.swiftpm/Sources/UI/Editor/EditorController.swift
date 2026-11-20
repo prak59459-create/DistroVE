@@ -540,7 +540,9 @@ final class EditorController: ObservableObject {
             let item: MediaAsset = asset
             Task.detached(priority: .utility) { [weak self] in
                 _ = try? await AudioAnalyzer.features(for: item, url: url)
-                await MainActor.run { self?.revision += 1 }
+                // 弱い参照（var）を別の並行処理の中で読まないよう、いったん定数に取る（Swift 6 の決まり）
+                guard let controller = self else { return }
+                await MainActor.run { controller.revision += 1 }
             }
         }
     }
@@ -552,11 +554,12 @@ final class EditorController: ObservableObject {
         let item: MediaAsset = asset
         Task.detached(priority: .utility) { [weak self] in
             guard let path = try? await MediaJobs.makeProxy(for: item) else { return }
+            guard let controller = self else { return }
             await MainActor.run {
-                self?.apply("プロキシ作成") { p in
+                controller.apply("プロキシ作成") { p in
                     if let index = p.media.firstIndex(where: { $0.id == id }) { p.media[index].proxyPath = path }
                 }
-                self?.showToast("軽いプロキシを作りました：\(item.name)")
+                controller.showToast("軽いプロキシを作りました：\(item.name)")
             }
         }
     }

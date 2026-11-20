@@ -55,9 +55,17 @@ final class FrameRenderer: @unchecked Sendable {
             let track: Track = project.tracks[index]
             if track.isHidden { continue }
             if index == project.mainTrackIndex, let tr = activeTransition(track, at: t) {
-                let a: CIImage = layerOver(tr.from, background: background, at: t, context: context)
-                let b: CIImage = layerOver(tr.to, background: background, at: t, context: context)
-                acc = EffectRenderer.transition(tr.kind, from: a, to: b, progress: tr.progress, canvas: canvas, unit: context.unit)
+                var sides: LayerContext = context
+                var kind: TransitionKind = tr.kind
+                if tr.kind == .smoothCut, let morph = graph.morphSources[tr.to.id], sources[morph.trackID] != nil {
+                    // スムースカット：前後のクリップとも、光学フローで変形させたコマを素材にする（色やエフェクトは各クリップのまま重ねる）
+                    sides.overrides[tr.from.id] = morph
+                    sides.overrides[tr.to.id] = morph
+                    kind = .fade
+                }
+                let a: CIImage = layerOver(tr.from, background: background, at: t, context: sides)
+                let b: CIImage = layerOver(tr.to, background: background, at: t, context: sides)
+                acc = EffectRenderer.transition(kind, from: a, to: b, progress: tr.progress, canvas: canvas, unit: context.unit)
                 continue
             }
             guard let clip = FrameRenderer.clip(in: track, at: t) else { continue }
@@ -86,6 +94,8 @@ final class FrameRenderer: @unchecked Sendable {
         let sources: [CMPersistentTrackID: CVPixelBuffer]
         let graph: RenderGraph
         let project: Project
+        /// クリップの素材のトラックを置き換える（スムースカットの区間）
+        var overrides: [UUID: RenderGraph.LayerSource] = [:]
     }
 
     struct ActiveTransition {
@@ -214,7 +224,8 @@ final class FrameRenderer: @unchecked Sendable {
     private func source(_ clip: Clip, local: Time, context: LayerContext) -> CIImage? {
         switch clip.kind {
         case .video:
-            guard let source = context.graph.layerSources[clip.id], let buffer = context.sources[source.trackID] else { return nil }
+            guard let source = context.overrides[clip.id] ?? context.graph.layerSources[clip.id],
+                  let buffer = context.sources[source.trackID] else { return nil }
             return CIImage(cvPixelBuffer: buffer).oriented(source.orientation)
         case .image, .gif:
             guard let asset = context.project.asset(clip.mediaID), let url = context.graph.media.url(for: asset) else { return nil }

@@ -287,3 +287,60 @@ final class SceneCutTests: XCTestCase {
         XCTAssertFalse(SceneCutDetector.isStill(scene(0), scene(0, gain: 1.02)))
     }
 }
+
+/// スムースカット（光学フローのトランジション）の計画。
+final class SmoothCutPlanTests: XCTestCase {
+    private func setup(transition: TransitionKind = .smoothCut) -> (Project, MediaAsset) {
+        var asset = MediaAsset(kind: .video, name: "v", storage: .copied)
+        asset.duration = Time(seconds: 10)
+        asset.frameRate = 30
+        asset.width = 1920
+        asset.height = 1080
+        var project = Project(name: "p", canvas: CanvasSettings(aspect: .landscape16x9, shortSide: 1080, fps: 30))
+        project.media.append(asset)
+        var a: Clip = project.makeClip(for: asset)
+        a.sourceStart = .zero
+        a.duration = Time(seconds: 1)
+        project.appendToMain(a)
+        var b: Clip = project.makeClip(for: asset)
+        b.sourceStart = Time(seconds: 3)
+        b.duration = Time(seconds: 1)
+        b.transitionIn = ClipTransition(kind: transition, duration: Time(seconds: 0.4))
+        project.appendToMain(b)
+        return (project, asset)
+    }
+
+    func testPlanCoversTheWindowAroundTheCut() throws {
+        let (project, _) = setup()
+        let items = SmoothCutPlan.all(in: project, fps: 30)
+        XCTAssertEqual(items.count, 1)
+        let plan: SmoothCutPlan = try XCTUnwrap(items.first?.plan)
+        XCTAssertEqual(plan.windowStart.seconds, 0.8, accuracy: 1e-6)
+        XCTAssertEqual(plan.duration.seconds, 0.4, accuracy: 1e-6)
+        XCTAssertEqual(plan.outputTimes.count, 12)
+        XCTAssertEqual(plan.outputTimes[1] - plan.outputTimes[0], 1.0 / 30, accuracy: 1e-6)
+        // 区間の始まりで A が写す 0.8 秒のコマから、区間の終わりで B が写す 3.2 秒のコマへ
+        XCTAssertEqual(plan.fromTime, 0.8, accuracy: 1e-6)
+        XCTAssertEqual(plan.toTime, 3.2, accuracy: 1e-6)
+        for i in 1..<plan.progress.count {
+            XCTAssertGreaterThan(plan.progress[i], plan.progress[i - 1])
+        }
+        XCTAssertLessThan(plan.progress[0], 0.05)
+        XCTAssertGreaterThan(plan.progress[plan.progress.count - 1], 0.95)
+        XCTAssertTrue(plan.cachePath.hasPrefix("Retimed/morph-"))
+        // フレームレートが違えば別のファイル
+        let other: SmoothCutPlan = try XCTUnwrap(SmoothCutPlan.all(in: project, fps: 60).first?.plan)
+        XCTAssertNotEqual(other.cachePath, plan.cachePath)
+        XCTAssertEqual(other.outputTimes.count, 24)
+    }
+
+    func testOnlySmoothCutsBetweenForwardVideoClips() {
+        let (fade, _) = setup(transition: .fade)
+        XCTAssertTrue(SmoothCutPlan.all(in: fade, fps: 30).isEmpty)
+        var (reversed, _) = setup()
+        if let main = reversed.mainTrackIndex {
+            reversed.tracks[main].clips[1].speed.reversed = true
+        }
+        XCTAssertTrue(SmoothCutPlan.all(in: reversed, fps: 30).isEmpty)
+    }
+}

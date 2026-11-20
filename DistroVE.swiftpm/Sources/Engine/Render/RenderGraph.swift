@@ -18,13 +18,17 @@ final class RenderGraph: @unchecked Sendable {
 
     private let state: Locked<Snapshot>
     let layerSources: [UUID: LayerSource]
+    /// スムースカットで作ったコマ（切れ目の後ろのクリップの id → そのトラック）。区間の間は前後のクリップの素材をこれに置き換える
+    let morphSources: [UUID: LayerSource]
     let renderSize: CGSize
     let renderer: FrameRenderer
     let media: MediaStore
 
-    init(project: Project, layerSources: [UUID: LayerSource], renderSize: CGSize, renderer: FrameRenderer, media: MediaStore) {
+    init(project: Project, layerSources: [UUID: LayerSource], morphSources: [UUID: LayerSource] = [:], renderSize: CGSize,
+         renderer: FrameRenderer, media: MediaStore) {
         self.state = Locked(RenderGraph.snapshot(project))
         self.layerSources = layerSources
+        self.morphSources = morphSources
         self.renderSize = renderSize
         self.renderer = renderer
         self.media = media

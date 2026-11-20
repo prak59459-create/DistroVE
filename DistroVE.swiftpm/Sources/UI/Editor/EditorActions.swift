@@ -184,6 +184,46 @@ extension EditorController {
             makeRetimed(clip.id, automatic: true)
             return
         }
+        for item in SmoothCutPlan.all(in: project, fps: project.canvas.fps) where smoothCutStatus(of: item.to) == .missing {
+            makeSmoothCut(for: item.to.id, automatic: true)
+            return
+        }
+    }
+
+    // MARK: スムースカット（光学フローのトランジション）
+
+    /// clip（切れ目の後ろのクリップ）に付けたスムースカットのコマができているか。
+    func smoothCutStatus(of clip: Clip) -> RetimeStatus {
+        guard let item = smoothCutPlan(for: clip.id) else { return .notNeeded }
+        let url: URL = AppPaths.media.appendingPathComponent(item.plan.cachePath)
+        return FileManager.default.fileExists(atPath: url.path) ? .ready : .missing
+    }
+
+    private func smoothCutPlan(for clipID: UUID) -> (plan: SmoothCutPlan, a: MediaAsset, b: MediaAsset)? {
+        for item in SmoothCutPlan.all(in: project, fps: project.canvas.fps) where item.to.id == clipID {
+            guard let a = project.asset(item.from.mediaID), let b = project.asset(item.to.mediaID) else { return nil }
+            return (item.plan, a, b)
+        }
+        return nil
+    }
+
+    /// スムースカットのコマを作る。automatic なら、ほかの処理の最中は黙って見送る。
+    func makeSmoothCut(for clipID: UUID, automatic: Bool = false) {
+        guard let item = smoothCutPlan(for: clipID) else {
+            if !automatic { showToast("前のクリップとつながっている動画どうしで使えます") }
+            return
+        }
+        if FileManager.default.fileExists(atPath: AppPaths.media.appendingPathComponent(item.plan.cachePath).path) { return }
+        if job != nil {
+            if !automatic { showToast("ほかの処理が終わるまでお待ちください") }
+            return
+        }
+        runJob("スムースカットを作成") { controller, progress in
+            _ = try await MediaJobs.makeSmoothCut(item.plan, assetA: item.a, assetB: item.b, progress: progress)
+            controller.retimeRevision += 1
+            controller.requestRebuild(immediately: true)
+            controller.scheduleAutoRetime(delay: 0.3)
+        }
     }
 
     func freezeFrame(seconds: Double = 2) {

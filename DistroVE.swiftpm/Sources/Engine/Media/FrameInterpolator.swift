@@ -54,6 +54,193 @@ final class FrameInterpolator: @unchecked Sendable {
         try await session.run(progress: progress, isCancelled: isCancelled)
     }
 
+    /// スムースカット（Q99）：from の最後のコマから to の最初のコマへ、光学フローで変形させたコマを plan のとおりに作る。
+    func renderMorph(plan: SmoothCutPlan, from aURL: URL, to bURL: URL, accuracy: VNGenerateOpticalFlowRequest.ComputationAccuracy,
+                     output: URL, progress: (@Sendable (Double) -> Void)?, isCancelled: (@Sendable () -> Bool)? = nil) async throws {
+        let first: CGImage = try await FrameInterpolator.still(at: plan.fromTime, url: aURL)
+        let second: CGImage = try await FrameInterpolator.still(at: plan.toTime, url: bURL)
+        let width: Int = max(2, first.width - first.width % 2)
+        let height: Int = max(2, first.height - first.height % 2)
+        guard let a = FrameInterpolator.pixelBuffer(from: first, width: width, height: height),
+              let b = FrameInterpolator.pixelBuffer(from: second, width: width, height: height) else {
+            throw EngineError.unreadable("つなぐコマを読めません")
+        }
+        var cache: CVMetalTextureCache?
+        CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &cache)
+        guard let textures = cache else { throw EngineError.unsupported("この端末ではコマを作れません") }
+        // 動き（行きと帰り）。読めなければ重ねるだけにする
+        var forward: MTLTexture?
+        var backward: MTLTexture?
+        var scale = SIMD2<Float>(0, 0)
+        if let smallA = FrameInterpolator.downscaled(a, context: context), let smallB = FrameInterpolator.downscaled(b, context: context),
+           let fab = FrameInterpolator.anyFlow(from: smallA, to: smallB, accuracy: accuracy),
+           let fba = FrameInterpolator.anyFlow(from: smallB, to: smallA, accuracy: accuracy) {
+            let convention: FlowConvention = fab.builtin ? FlowConvention(sign: 1, normalized: false)
+                : (FrameInterpolator.calibrate(a: smallA, b: smallB, flow: fab.field) ?? FlowConvention(sign: 1, normalized: false))
+            forward = FrameInterpolator.texture(fab.field, device: device)
+            backward = FrameInterpolator.texture(fba.field, device: device)
+            let fw: Float = Float(fab.field.width)
+            let fh: Float = Float(fab.field.height)
+            scale = convention.normalized ? SIMD2<Float>(convention.sign, convention.sign)
+                : SIMD2<Float>(convention.sign / fw, convention.sign / fh)
+        }
+        try? FileManager.default.removeItem(at: output)
+        let writer = try AVAssetWriter(outputURL: output, fileType: .mov)
+        var colors: [String: Any] = [:]
+        colors[AVVideoColorPrimariesKey] = AVVideoColorPrimaries_ITU_R_709_2
+        colors[AVVideoTransferFunctionKey] = AVVideoTransferFunction_ITU_R_709_2
+        colors[AVVideoYCbCrMatrixKey] = AVVideoYCbCrMatrix_ITU_R_709_2
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: FrameInterpolator.writerSettings(width: width, height: height, fps: plan.fps, colors: colors))
+        input.expectsMediaDataInRealTime = false
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input,
+                                                           sourcePixelBufferAttributes: FrameInterpolator.pixelAttributes(width: width, height: height))
+        guard writer.canAdd(input) else { throw EngineError.exportFailed("コマを書き出せません") }
+        writer.add(input)
+        guard writer.startWriting() else { throw EngineError.exportFailed(writer.error?.localizedDescription ?? "書き込みを始められません") }
+        writer.startSession(atSourceTime: .zero)
+        let sigma: Float = max(1, 2.5 * Float(height) / 1080)
+        let half: Double = 0.5 / max(1, plan.fps)
+        var last: Int64 = -1
+        for (k, p) in plan.progress.enumerated() {
+            if Task.isCancelled || isCancelled?() == true {
+                writer.cancelWriting()
+                throw EngineError.cancelled
+            }
+            guard let pool = adaptor.pixelBufferPool else { throw EngineError.exportFailed("描画先を確保できません") }
+            var made: CVPixelBuffer?
+            CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &made)
+            guard let target = made else { throw EngineError.exportFailed("描画先を確保できません") }
+            var params = RetimeParams(t0: Float(p), t1: Float(p), weight: 1, sigma: sigma, flowScale: scale, samples: 1,
+                                      mode: forward == nil ? 0 : 1, accumulate: 0, pad: 0)
+            try encodeOnce(a: a, b: b, forward: forward, backward: backward, into: target, params: &params, cache: textures)
+            let time: Double = k == 0 ? 0 : plan.outputTimes[k] - half
+            var ticks: Int64 = Int64((time * Double(Time.timescale)).rounded())
+            if ticks <= last { ticks = last + 1 }
+            last = ticks
+            while !input.isReadyForMoreMediaData {
+                if writer.status == .failed { break }
+                try await Task.sleep(nanoseconds: 2_000_000)
+            }
+            if !adaptor.append(target, withPresentationTime: CMTime(value: ticks, timescale: CMTimeScale(Time.timescale))) {
+                throw EngineError.exportFailed(writer.error?.localizedDescription ?? "コマの書き出しに失敗しました")
+            }
+            progress?(Double(k + 1) / Double(max(1, plan.progress.count)))
+        }
+        input.markAsFinished()
+        writer.endSession(atSourceTime: plan.duration.cmTime)
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            writer.finishWriting { continuation.resume() }
+        }
+        if writer.status != .completed {
+            throw EngineError.exportFailed(writer.error?.localizedDescription ?? "コマの保存に失敗しました")
+        }
+    }
+
+    /// 2 枚の絵から 1 枚を作る（変形の 1 コマ）。
+    private func encodeOnce(a: CVPixelBuffer, b: CVPixelBuffer, forward: MTLTexture?, backward: MTLTexture?, into target: CVPixelBuffer,
+                            params: inout RetimeParams, cache: CVMetalTextureCache) throws {
+        guard let texA = FrameInterpolator.metalTexture(a, write: false, cache: cache), let texB = FrameInterpolator.metalTexture(b, write: false, cache: cache),
+              let texOut = FrameInterpolator.metalTexture(target, write: true, cache: cache),
+              let ta = CVMetalTextureGetTexture(texA), let tb = CVMetalTextureGetTexture(texB), let out = CVMetalTextureGetTexture(texOut),
+              let commands = queue.makeCommandBuffer(), let encoder = commands.makeComputeCommandEncoder() else {
+            throw EngineError.exportFailed("描画できません")
+        }
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: 1, height: 1, mipmapped: false)
+        d.usage = [.shaderRead]
+        guard let filler = device.makeTexture(descriptor: d) else { throw EngineError.exportFailed("描画できません") }
+        encoder.setComputePipelineState(pipeline)
+        encoder.setTexture(ta, index: 0)
+        encoder.setTexture(tb, index: 1)
+        encoder.setTexture(forward ?? filler, index: 2)
+        encoder.setTexture(backward ?? filler, index: 3)
+        encoder.setTexture(filler, index: 4)
+        encoder.setTexture(out, index: 5)
+        encoder.setBytes(&params, length: MemoryLayout<RetimeParams>.stride, index: 0)
+        let group = MTLSize(width: 16, height: 16, depth: 1)
+        let groups = MTLSize(width: (out.width + 15) / 16, height: (out.height + 15) / 16, depth: 1)
+        encoder.dispatchThreadgroups(groups, threadsPerThreadgroup: group)
+        encoder.endEncoding()
+        commands.commit()
+        commands.waitUntilCompleted()
+        withExtendedLifetime([texA, texB, texOut]) {}
+        if commands.status != .completed { throw EngineError.exportFailed("コマを作れませんでした") }
+    }
+
+    /// 動画の time 秒のコマ（回転を反映した向き）。
+    static func still(at seconds: Double, url: URL) async throws -> CGImage {
+        let asset = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        let time = CMTime(seconds: max(0, seconds), preferredTimescale: 600_000)
+        return try await generator.image(at: time).image
+    }
+
+    /// CGImage を width × height の BGRA の絵に描く。
+    static func pixelBuffer(from image: CGImage, width: Int, height: Int) -> CVPixelBuffer? {
+        var made: CVPixelBuffer?
+        CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA,
+                            pixelAttributes(width: width, height: height) as CFDictionary, &made)
+        guard let buffer = made, let space = CGColorSpace(name: CGColorSpace.itur_709) else { return nil }
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        let info: UInt32 = CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        guard let context = CGContext(data: CVPixelBufferGetBaseAddress(buffer), width: width, height: height, bitsPerComponent: 8,
+                                      bytesPerRow: CVPixelBufferGetBytesPerRow(buffer), space: space, bitmapInfo: info) else { return nil }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return buffer
+    }
+
+    /// 動きを求める用の小さい絵（長い辺を flowSide まで）。
+    static func downscaled(_ buffer: CVPixelBuffer, context: CIContext) -> CVPixelBuffer? {
+        let w: Int = CVPixelBufferGetWidth(buffer)
+        let h: Int = CVPixelBufferGetHeight(buffer)
+        let ratio: Double = min(1, Double(flowSide) / Double(max(w, h)))
+        if ratio >= 0.999 { return buffer }
+        let sw: Int = max(2, Int(Double(w) * ratio) / 2 * 2)
+        let sh: Int = max(2, Int(Double(h) * ratio) / 2 * 2)
+        var made: CVPixelBuffer?
+        CVPixelBufferCreate(kCFAllocatorDefault, sw, sh, kCVPixelFormatType_32BGRA, pixelAttributes(width: sw, height: sh) as CFDictionary, &made)
+        guard let small = made else { return nil }
+        let scale = CGAffineTransform(scaleX: CGFloat(sw) / CGFloat(w), y: CGFloat(sh) / CGFloat(h))
+        context.render(CIImage(cvPixelBuffer: buffer).transformed(by: scale), to: small, bounds: CGRect(x: 0, y: 0, width: sw, height: sh), colorSpace: nil)
+        return small
+    }
+
+    /// Vision（新しい版 → 古い版）、だめなら自前の推定で動きを求める。builtin は自前の推定を使ったか。
+    static func anyFlow(from a: CVPixelBuffer, to b: CVPixelBuffer,
+                        accuracy: VNGenerateOpticalFlowRequest.ComputationAccuracy) -> (field: FlowField, builtin: Bool)? {
+        if let field = try? visionFlow(from: a, to: b, accuracy: accuracy, revision: nil) { return (field, false) }
+        if let field = try? visionFlow(from: a, to: b, accuracy: accuracy, revision: VNGenerateOpticalFlowRequestRevision1) { return (field, false) }
+        guard let grayA = gray(a), let grayB = gray(b) else { return nil }
+        return (OpticalFlowLK.flow(from: grayA, to: grayB), true)
+    }
+
+    static func texture(_ field: FlowField, device: MTLDevice) -> MTLTexture? {
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rg32Float, width: field.width, height: field.height, mipmapped: false)
+        d.usage = .shaderRead
+        guard let texture = device.makeTexture(descriptor: d) else { return nil }
+        field.vectors.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            guard let base = raw.baseAddress else { return }
+            texture.replace(region: MTLRegionMake2D(0, 0, field.width, field.height), mipmapLevel: 0, withBytes: base,
+                            bytesPerRow: field.width * 2 * MemoryLayout<Float>.size)
+        }
+        return texture
+    }
+
+    static func metalTexture(_ buffer: CVPixelBuffer, write: Bool, cache: CVMetalTextureCache) -> CVMetalTexture? {
+        let usage: MTLTextureUsage = write ? [.shaderWrite, .shaderRead] : [.shaderRead]
+        var attributes: [String: Any] = [:]
+        attributes[kCVMetalTextureUsage as String] = NSNumber(value: usage.rawValue)
+        var result: CVMetalTexture?
+        let status: CVReturn = CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault, cache, buffer, attributes as CFDictionary,
+                                                                         .bgra8Unorm, CVPixelBufferGetWidth(buffer),
+                                                                         CVPixelBufferGetHeight(buffer), 0, &result)
+        return status == kCVReturnSuccess ? result : nil
+    }
+
     // MARK: 動き（Vision）
 
     /// handler の絵（from）と targeted の絵（to）の間の動き（Vision）。向きと単位は calibrate で確かめる。
@@ -333,19 +520,21 @@ final class FrameInterpolator: @unchecked Sendable {
 }
 
 /// 1 回のコマ作り（読み込み・書き込み・作業中の絵）。FrameInterpolator は同時にいくつ動いてもよいよう、状態はここに持つ。
+/// シェーダーに渡す値（Metal 側の Params と同じ並び）
+struct RetimeParams {
+    var t0: Float
+    var t1: Float
+    var weight: Float
+    var sigma: Float
+    var flowScale: SIMD2<Float>
+    var samples: Int32
+    var mode: Int32
+    var accumulate: Int32
+    var pad: Int32
+}
+
 private final class RetimeSession {
-    /// シェーダーに渡す値（Metal 側の Params と同じ並び）
-    struct Params {
-        var t0: Float
-        var t1: Float
-        var weight: Float
-        var sigma: Float
-        var flowScale: SIMD2<Float>
-        var samples: Int32
-        var mode: Int32
-        var accumulate: Int32
-        var pad: Int32
-    }
+    typealias Params = RetimeParams
 
     /// 読み込んだ素材の 1 コマ。縮小画像・カット判定用の情報・テクスチャは要るときに作る。
     final class SourceFrame {

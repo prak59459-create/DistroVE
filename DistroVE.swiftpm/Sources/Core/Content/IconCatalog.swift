@@ -435,7 +435,8 @@ enum IconCatalog {
             "wipeLeft": "rectangle.lefthalf.inset.filled", "wipeRight": "rectangle.righthalf.inset.filled",
             "wipeUp": "rectangle.tophalf.inset.filled", "wipeDown": "rectangle.bottomhalf.inset.filled",
             "zoomIn": "plus.magnifyingglass", "zoomOut": "minus.magnifyingglass", "blur": "drop", "glitch": "waveform.path.ecg",
-            "spin": "arrow.triangle.2.circlepath", "flip3D": "arrow.left.and.right.righttriangle.left.righttriangle.right", "cube3D": "cube.transparent"
+            "spin": "arrow.triangle.2.circlepath", "flip3D": "arrow.left.and.right.righttriangle.left.righttriangle.right", "cube3D": "cube.transparent",
+            "smoothCut": "arrow.triangle.merge"
         ]
         let prompts: [String: String] = [
             "fade": "two frames cross-dissolving into each other",
@@ -455,7 +456,8 @@ enum IconCatalog {
             "glitch": "two frames meeting in glitch slices",
             "spin": "a frame spinning with a circular arrow",
             "flip3D": "a card flipping in 3D",
-            "cube3D": "a 3D cube rotating to the next face"
+            "cube3D": "a 3D cube rotating to the next face",
+            "smoothCut": "two nearly identical frames morphing smoothly into one with flowing motion lines"
         ]
         var list: [IconSlot] = []
         for kind in TransitionKind.allCases {

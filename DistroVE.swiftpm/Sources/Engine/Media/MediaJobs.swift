@@ -80,6 +80,34 @@ enum MediaJobs {
         #endif
     }
 
+    /// スムースカット（光学フローのトランジション）のコマを作る。戻り値は作ったファイルの相対パス（同じ条件なら同じ名前）。
+    static func makeSmoothCut(_ plan: SmoothCutPlan, assetA: MediaAsset, assetB: MediaAsset,
+                              progress: (@Sendable (Double) -> Void)? = nil,
+                              isCancelled: (@Sendable () -> Bool)? = nil) async throws -> String {
+        let target: URL = AppPaths.media.appendingPathComponent(plan.cachePath)
+        if FileManager.default.fileExists(atPath: target.path) { return plan.cachePath }
+        guard let urlA = MediaStore.shared.url(for: assetA) else { throw EngineError.missingMedia(assetA.name) }
+        guard let urlB = MediaStore.shared.url(for: assetB) else { throw EngineError.missingMedia(assetB.name) }
+        #if canImport(Vision)
+        guard let interpolator = FrameInterpolator.shared else { throw EngineError.unsupported("この端末ではコマを作れません") }
+        let folder: URL = AppPaths.media.appendingPathComponent(RetimePlan.folder, isDirectory: true)
+        AppPaths.ensure(folder)
+        let working: URL = folder.appendingPathComponent("working-" + UUID().uuidString + ".mov")
+        do {
+            try await interpolator.renderMorph(plan: plan, from: urlA, to: urlB, accuracy: DevicePerformance.current.flowAccuracy,
+                                               output: working, progress: progress, isCancelled: isCancelled)
+        } catch {
+            try? FileManager.default.removeItem(at: working)
+            throw error
+        }
+        try? FileManager.default.removeItem(at: target)
+        try FileManager.default.moveItem(at: working, to: target)
+        return plan.cachePath
+        #else
+        throw EngineError.unsupported("この端末ではコマを作れません")
+        #endif
+    }
+
     /// clip を fps で再生・書き出すときに、作ったコマのファイルが要るか（コマの繰り返しで足りるなら要らない）。
     static func needsRetime(_ clip: Clip, asset: MediaAsset, fps: Double) -> Bool {
         if clip.kind != .video || !clip.speed.makesFrames { return false }

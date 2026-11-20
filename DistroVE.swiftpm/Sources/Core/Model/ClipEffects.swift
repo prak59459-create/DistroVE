@@ -149,6 +149,8 @@ enum TransitionKind: String, Codable, CaseIterable, Sendable {
     case spin
     case flip3D
     case cube3D
+    /// 光学フローで切れ目の前後のコマを変形させてつなぐ（インタビューのジャンプカットなど、同じ場面をつなぐとき）
+    case smoothCut
 
     var label: String {
         switch self {
@@ -170,6 +172,7 @@ enum TransitionKind: String, Codable, CaseIterable, Sendable {
         case .spin: return "スピン"
         case .flip3D: return "3D フリップ"
         case .cube3D: return "3D キューブ"
+        case .smoothCut: return "スムースカット"
         }
     }
 }

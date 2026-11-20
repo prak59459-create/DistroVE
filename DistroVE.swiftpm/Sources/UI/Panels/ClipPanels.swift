@@ -91,6 +91,41 @@ struct FrameInterpolationRows: View {
     }
 }
 
+/// スムースカット（光学フローのトランジション）の状態。
+struct SmoothCutStatusRow: View {
+    @ObservedObject var controller: EditorController
+    let clip: Clip
+
+    var body: some View {
+        let state: RetimeStatus = controller.retimeRevision >= 0 ? controller.smoothCutStatus(of: clip) : .notNeeded
+        VStack(alignment: .leading, spacing: 4) {
+            Text("同じ場面のつなぎ目（インタビューの言い間違いを切った所など）を、光学フローで前後のコマを変形させてなめらかにつなぎます。")
+                .font(.caption2)
+                .foregroundStyle(Theme.subtext)
+            switch state {
+            case .ready:
+                DVLabel("作成済み", icon: "status.done")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.subtext)
+            case .missing:
+                HStack(spacing: 8) {
+                    DVLabel("まだ作っていません（今はクロスフェード）", icon: "status.waiting")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.subtext)
+                    Spacer(minLength: 4)
+                    Button("作る") { controller.makeSmoothCut(for: clip.id) }
+                        .buttonStyle(.borderedProminent)
+                        .font(.caption)
+                }
+            case .notNeeded, .needsReverse:
+                DVLabel("動画どうしのつなぎ目で使えます（逆再生のクリップではクロスフェードになります）", icon: "status.warning")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.subtext)
+            }
+        }
+    }
+}
+
 /// 変形（Q35）と 3D（Q50）。
 struct TransformPanel: View {
     @ObservedObject var controller: EditorController
@@ -341,6 +376,9 @@ struct TransitionPanel: View {
                             controller.updateSelected("トランジション") { $0.transitionIn = ClipTransition(kind: kind, duration: duration) }
                         }
                     }
+                }
+                if clip.transitionIn?.kind == .smoothCut {
+                    SmoothCutStatusRow(controller: controller, clip: clip)
                 }
                 if let transition = clip.transitionIn {
                     ParamRow(label: "長さ", range: 0.1...2, value: transition.duration.seconds, format: "%.2f秒", onChange: { v in

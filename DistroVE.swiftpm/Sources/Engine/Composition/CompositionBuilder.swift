@@ -119,14 +119,21 @@ final class CompositionBuilder: @unchecked Sendable {
                 let retimed: Loaded? = await retimedSource(clip, asset, fps: fps, projectFPS: project.canvas.fps)
                 var lead: Time = .zero
                 var trail: Time = .zero
+                // スムースカットののりしろは切れ目のコマで止める（切った所の映像を見せない）
+                var freezeLead: Bool = false
+                var freezeTrail: Bool = false
                 if isMain {
                     if position > 0, let tr = clip.transitionIn {
                         let previous: Clip = track.clips[position - 1]
                         if previous.end == clip.start { lead = FrameRenderer.transitionHalf(tr, previous, clip) }
+                        freezeLead = tr.kind == .smoothCut
                     }
                     if position + 1 < track.clips.count {
                         let next: Clip = track.clips[position + 1]
-                        if let tr = next.transitionIn, next.start == clip.end { trail = FrameRenderer.transitionHalf(tr, clip, next) }
+                        if let tr = next.transitionIn, next.start == clip.end {
+                            trail = FrameRenderer.transitionHalf(tr, clip, next)
+                            freezeTrail = tr.kind == .smoothCut
+                        }
                     }
                 }
                 let windowStart: Time = max(.zero, clip.start - lead)
@@ -151,7 +158,7 @@ final class CompositionBuilder: @unchecked Sendable {
                 let mediaFrame: Time = Time.frameDuration(fps: loaded.frameRate)
                 let map = SpeedMap(settings: clip.speed)
                 if lead.isPositive {
-                    let needed: Time = lead.scaled(map.rate(at: 0))
+                    let needed: Time = freezeLead ? .zero : lead.scaled(map.rate(at: 0))
                     try insertHandle(target, source: sourceTrack, at: windowStart, length: lead, sourceStart: base - needed,
                                      sourceLength: needed, freezeAt: base, frame: mediaFrame, mediaDuration: mediaDuration)
                 }
@@ -162,7 +169,7 @@ final class CompositionBuilder: @unchecked Sendable {
                 }
                 if trail.isPositive {
                     let sourceEnd: Time = base + clip.sourceDuration
-                    let needed: Time = trail.scaled(map.rate(at: 1))
+                    let needed: Time = freezeTrail ? .zero : trail.scaled(map.rate(at: 1))
                     try insertHandle(target, source: sourceTrack, at: clip.end, length: trail, sourceStart: sourceEnd,
                                      sourceLength: needed, freezeAt: sourceEnd - mediaFrame, frame: mediaFrame, mediaDuration: mediaDuration)
                 }
@@ -171,13 +178,27 @@ final class CompositionBuilder: @unchecked Sendable {
             }
         }
 
+        // スムースカット（光学フローのトランジション）で作ったコマ。区間の間だけ専用のトラックに置く
+        var morphSources: [UUID: RenderGraph.LayerSource] = [:]
+        for item in SmoothCutPlan.all(in: project, fps: fps) {
+            guard let made = await morphSource(item.from, item.to, project: project, fps: fps) else { continue }
+            guard let morphTrack = made.video,
+                  let target = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else { continue }
+            let length: Time = min(made.duration, item.plan.duration)
+            if !length.isPositive { continue }
+            try target.insertTimeRange(CMTimeRange(start: .zero, duration: length.cmTime), of: morphTrack, at: item.plan.windowStart.cmTime)
+            morphSources[item.to.id] = RenderGraph.LayerSource(trackID: target.trackID, orientation: .up)
+            windows.append(Window(start: item.plan.windowStart, end: item.plan.windowStart + length, trackID: target.trackID))
+        }
+
         let audioMix = AVMutableAudioMix()
         if options.includeAudio {
             audioMix.inputParameters = try await buildAudio(project: project, composition: composition, useProxies: options.useProxies)
         }
 
         let renderSize: CGSize = options.renderSize ?? CompositionBuilder.renderSize(for: project, scale: options.renderScale)
-        let graph = RenderGraph(project: project, layerSources: layerSources, renderSize: renderSize, renderer: renderer, media: media)
+        let graph = RenderGraph(project: project, layerSources: layerSources, morphSources: morphSources, renderSize: renderSize,
+                                renderer: renderer, media: media)
         let videoComposition = AVMutableVideoComposition()
         videoComposition.customVideoCompositorClass = DistroCompositor.self
         videoComposition.frameDuration = frame.cmTime
@@ -197,6 +218,21 @@ final class CompositionBuilder: @unchecked Sendable {
         for rate in rates {
             let plan = RetimePlan(clip: clip, asset: asset, fps: rate)
             if !plan.isNeeded(sourceFPS: asset.frameRate) { return nil }
+            let url: URL = AppPaths.media.appendingPathComponent(plan.cachePath)
+            if FileManager.default.fileExists(atPath: url.path), let loaded = try? await load(url), loaded.video != nil {
+                return loaded
+            }
+        }
+        return nil
+    }
+
+    /// スムースカットのために作ったコマのファイル（このフレームレートのものが無ければ、プロジェクトのフレームレートのもの）。
+    private func morphSource(_ a: Clip, _ b: Clip, project: Project, fps: Double) async -> Loaded? {
+        guard let assetA = project.asset(a.mediaID), let assetB = project.asset(b.mediaID) else { return nil }
+        var rates: [Double] = [fps]
+        if abs(project.canvas.fps - fps) > 0.001 { rates.append(project.canvas.fps) }
+        for rate in rates {
+            guard let plan = SmoothCutPlan(from: a, to: b, assetA: assetA, assetB: assetB, fps: rate) else { continue }
             let url: URL = AppPaths.media.appendingPathComponent(plan.cachePath)
             if FileManager.default.fileExists(atPath: url.path), let loaded = try? await load(url), loaded.video != nil {
                 return loaded

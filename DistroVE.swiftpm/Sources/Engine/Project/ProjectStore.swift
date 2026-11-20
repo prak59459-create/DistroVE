@@ -266,6 +266,12 @@ final class ProjectStore: @unchecked Sendable {
                     }
                 }
             }
+            // スムースカットのコマ
+            var rates: [Double] = [project.canvas.fps]
+            for rate in ExportSettings.frameRates { rates.append(Double(rate)) }
+            for rate in rates {
+                for item in SmoothCutPlan.all(in: project, fps: rate) { used.insert(item.plan.cachePath) }
+            }
         }
         var freed: Int64 = 0
         let root: URL = AppPaths.media

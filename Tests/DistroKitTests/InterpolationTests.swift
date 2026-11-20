@@ -25,7 +25,7 @@ final class InterpolationTests: XCTestCase {
     private let squareSize: Int = 48
 
     /// 市松模様の四角が 1 コマに 8 画素ずつ右へ動く動画。cutAt を渡すと、そのコマからは横じまの別の場面になる。
-    private func makeMovingSquare(frames: Int, fps: Int, cutAt: Int? = nil) async throws -> URL {
+    private func makeMovingSquare(frames: Int, fps: Int, cutAt: Int? = nil, step: Int = 8) async throws -> URL {
         let url: URL = root.appendingPathComponent("square-\(UUID().uuidString).mov")
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         var settings: [String: Any] = [:]
@@ -53,7 +53,7 @@ final class InterpolationTests: XCTestCase {
             if let cut = cutAt, i >= cut {
                 drawStripes(buffer, offset: i - cut)
             } else {
-                draw(buffer, left: 20 + i * 8, top: 96)
+                draw(buffer, left: 20 + i * step, top: 96)
             }
             XCTAssertTrue(adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(i), timescale: CMTimeScale(fps))))
         }
@@ -294,6 +294,63 @@ final class InterpolationTests: XCTestCase {
             XCTAssertEqual(middle.centroid, expected, accuracy: 2.5, "コマ \(2 * k + 1)")
             XCTAssertGreaterThan(frames[2 * k + 2].centroid - frames[2 * k].centroid, 5, "コマ \(2 * k)")
         }
+    }
+
+    /// スムースカット：切れ目をはさむ区間は、光学フローで変形させたコマになる（二重に重ならず、区間の端で絵が飛ばない）。
+    func testSmoothCutMorphsAcrossAJumpCut() async throws {
+        let source: URL = try await makeMovingSquare(frames: 30, fps: 30, step: 3)
+        let asset: MediaAsset = try await MediaStore.shared.importFile(at: source, copy: true)
+        var project = Project(name: "smooth", canvas: CanvasSettings(aspect: .landscape4x3, shortSide: 240, fps: 30))
+        project.media.append(asset)
+        // A は素材の 0〜0.5 秒、B は 0.7 秒から（0.2 秒ぶんを切ったジャンプカット）
+        var a: Clip = project.makeClip(for: asset)
+        a.sourceStart = .zero
+        a.duration = Time(seconds: 0.5)
+        project.appendToMain(a)
+        var b: Clip = project.makeClip(for: asset)
+        b.sourceStart = Time(seconds: 0.7)
+        b.duration = Time(seconds: 0.3)
+        b.transitionIn = ClipTransition(kind: .smoothCut, duration: Time(seconds: 0.2))
+        project.appendToMain(b)
+        let items = SmoothCutPlan.all(in: project, fps: 30)
+        XCTAssertEqual(items.count, 1)
+        let plan: SmoothCutPlan = try XCTUnwrap(items.first?.plan)
+        let path: String = try await MediaJobs.makeSmoothCut(plan, assetA: asset, assetB: asset)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: AppPaths.media.appendingPathComponent(path).path))
+
+        var options = CompositionBuilder.Options()
+        options.includeAudio = false
+        let built: CompositionBuilder.Result = try await CompositionBuilder().build(project: project, options: options)
+        let reader = try AVAssetReader(asset: built.composition)
+        var attributes: [String: Any] = [:]
+        attributes[kCVPixelBufferPixelFormatTypeKey as String] = kCVPixelFormatType_32BGRA
+        let output = AVAssetReaderVideoCompositionOutput(videoTracks: built.composition.tracks(withMediaType: .video), videoSettings: attributes)
+        output.videoComposition = built.videoComposition
+        reader.add(output)
+        XCTAssertTrue(reader.startReading())
+        var frames: [FrameInfo] = []
+        while let sample = output.copyNextSampleBuffer() {
+            guard let buffer = CMSampleBufferGetImageBuffer(sample) else { continue }
+            frames.append(inspect(buffer, time: CMSampleBufferGetPresentationTimeStamp(sample).seconds))
+        }
+        XCTAssertGreaterThanOrEqual(frames.count, 24)
+        // 区間は 0.4〜0.6 秒（コマ 12〜17）。区間の前後のコマの位置
+        let before: FrameInfo = frames[11]
+        let after: FrameInfo = frames[18]
+        var previous: Double = before.centroid
+        for k in 12...17 {
+            let frame: FrameInfo = frames[k]
+            // 前のコマから少しずつ進み、行き過ぎない（絵が飛ばない）
+            XCTAssertGreaterThan(frame.centroid, previous - 1.5, "コマ \(k)")
+            XCTAssertLessThan(frame.centroid - previous, 14, "コマ \(k)")
+            XCTAssertLessThan(frame.centroid, after.centroid + 1.5, "コマ \(k)")
+            // 二重にならない（クロスフェードなら中間の明るさが大きく増える）
+            XCTAssertLessThan(frame.halfTone, before.halfTone + 250, "コマ \(k)")
+            XCTAssertGreaterThan(Double(frame.bright), Double(before.bright) * 0.7, "コマ \(k)")
+            previous = frame.centroid
+        }
+        XCTAssertLessThan(after.centroid - previous, 14)
+        XCTAssertGreaterThan(after.centroid - before.centroid, 20)
     }
 
     private func distance(_ a: [Double], _ b: [Double]) -> Double {
