@@ -54,7 +54,15 @@ final class FrameInterpolator: @unchecked Sendable {
         try await session.run(progress: progress, isCancelled: isCancelled)
     }
 
-    /// スムースカット（Q99）：from の最後のコマから to の最初のコマへ、光学フローで変形させたコマを plan のとおりに作る。
+    /// スムースカットで変形させる動き（読めなければ forward が nil で、重ねるだけにする）。
+    private struct MorphFlow {
+        var forward: MTLTexture?
+        var backward: MTLTexture?
+        var scale: SIMD2<Float> = SIMD2<Float>(0, 0)
+    }
+
+    /// スムースカット（Q99）：区間の始まりの A のコマから終わりの B のコマへ、光学フローで変形させたコマを plan のとおりに作る。
+    /// 型の確認が重くならないよう、絵の用意・動き・書き出しの準備・1 コマずつの書き出しを分ける。
     func renderMorph(plan: SmoothCutPlan, from aURL: URL, to bURL: URL, accuracy: VNGenerateOpticalFlowRequest.ComputationAccuracy,
                      output: URL, progress: (@Sendable (Double) -> Void)?, isCancelled: (@Sendable () -> Bool)? = nil) async throws {
         let first: CGImage = try await FrameInterpolator.still(at: plan.fromTime, url: aURL)
@@ -68,46 +76,14 @@ final class FrameInterpolator: @unchecked Sendable {
         var cache: CVMetalTextureCache?
         CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &cache)
         guard let textures = cache else { throw EngineError.unsupported("この端末ではコマを作れません") }
-        // 動き（行きと帰り）。読めなければ重ねるだけにする
-        var forward: MTLTexture?
-        var backward: MTLTexture?
-        var scale = SIMD2<Float>(0, 0)
-        if let smallA = FrameInterpolator.downscaled(a, context: context), let smallB = FrameInterpolator.downscaled(b, context: context),
-           let fab = FrameInterpolator.anyFlow(from: smallA, to: smallB, accuracy: accuracy),
-           let fba = FrameInterpolator.anyFlow(from: smallB, to: smallA, accuracy: accuracy) {
-            var found: FlowConvention?
-            if fab.builtin {
-                found = FlowConvention(sign: 1, normalized: false)
-            } else {
-                found = FrameInterpolator.learnedConvention.get() ?? FrameInterpolator.calibrate(a: smallA, b: smallB, flow: fab.field)
-                if let known = found { FrameInterpolator.learnedConvention.set(known) }
-            }
-            // 動きを読み損ねたとき（大きすぎる動きなど）は、変形させずに重ねるだけにする
-            if let convention = found, FrameInterpolator.flowHelps(a: smallA, b: smallB, flow: fab.field, convention: convention) {
-                forward = FrameInterpolator.texture(fab.field, device: device)
-                backward = FrameInterpolator.texture(fba.field, device: device)
-                let fw: Float = Float(fab.field.width)
-                let fh: Float = Float(fab.field.height)
-                scale = convention.normalized ? SIMD2<Float>(convention.sign, convention.sign)
-                    : SIMD2<Float>(convention.sign / fw, convention.sign / fh)
-            }
-        }
-        try? FileManager.default.removeItem(at: output)
-        let writer = try AVAssetWriter(outputURL: output, fileType: .mov)
-        var colors: [String: Any] = [:]
-        colors[AVVideoColorPrimariesKey] = AVVideoColorPrimaries_ITU_R_709_2
-        colors[AVVideoTransferFunctionKey] = AVVideoTransferFunction_ITU_R_709_2
-        colors[AVVideoYCbCrMatrixKey] = AVVideoYCbCrMatrix_ITU_R_709_2
-        let input = AVAssetWriterInput(mediaType: .video, outputSettings: FrameInterpolator.writerSettings(width: width, height: height, fps: plan.fps, colors: colors))
-        input.expectsMediaDataInRealTime = false
+        let flow: MorphFlow = morphFlow(a, b, accuracy: accuracy)
+        let writer: AVAssetWriter = try FrameInterpolator.morphWriter(output: output)
+        let input: AVAssetWriterInput = try FrameInterpolator.morphInput(writer, width: width, height: height, fps: plan.fps)
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input,
                                                            sourcePixelBufferAttributes: FrameInterpolator.pixelAttributes(width: width, height: height))
-        guard writer.canAdd(input) else { throw EngineError.exportFailed("コマを書き出せません") }
-        writer.add(input)
         guard writer.startWriting() else { throw EngineError.exportFailed(writer.error?.localizedDescription ?? "書き込みを始められません") }
         writer.startSession(atSourceTime: .zero)
         let sigma: Float = max(1, 2.5 * Float(height) / 1080)
-        let half: Double = 0.5 / max(1, plan.fps)
         var last: Int64 = -1
         for (k, p) in plan.progress.enumerated() {
             if Task.isCancelled || isCancelled?() == true {
@@ -118,20 +94,12 @@ final class FrameInterpolator: @unchecked Sendable {
             var made: CVPixelBuffer?
             CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &made)
             guard let target = made else { throw EngineError.exportFailed("描画先を確保できません") }
-            var params = RetimeParams(t0: Float(p), t1: Float(p), weight: 1, sigma: sigma, flowScale: scale, samples: 1,
-                                      mode: forward == nil ? 0 : 1, accumulate: 0, pad: 0)
-            try encodeOnce(a: a, b: b, forward: forward, backward: backward, into: target, params: &params, cache: textures)
-            let time: Double = k == 0 ? 0 : plan.outputTimes[k] - half
-            var ticks: Int64 = Int64((time * Double(Time.timescale)).rounded())
-            if ticks <= last { ticks = last + 1 }
-            last = ticks
-            while !input.isReadyForMoreMediaData {
-                if writer.status == .failed { break }
-                try await Task.sleep(nanoseconds: 2_000_000)
-            }
-            if !adaptor.append(target, withPresentationTime: CMTime(value: ticks, timescale: CMTimeScale(Time.timescale))) {
-                throw EngineError.exportFailed(writer.error?.localizedDescription ?? "コマの書き出しに失敗しました")
-            }
+            let mode: Int32 = flow.forward == nil ? 0 : 1
+            var params = RetimeParams(t0: Float(p), t1: Float(p), weight: 1, sigma: sigma, flowScale: flow.scale, samples: 1,
+                                      mode: mode, accumulate: 0, pad: 0)
+            try encodeOnce(a: a, b: b, forward: flow.forward, backward: flow.backward, into: target, params: &params, cache: textures)
+            last = FrameInterpolator.morphTicks(plan, index: k, after: last)
+            try await FrameInterpolator.append(target, ticks: last, input: input, adaptor: adaptor, writer: writer)
             progress?(Double(k + 1) / Double(max(1, plan.progress.count)))
         }
         input.markAsFinished()
@@ -141,6 +109,72 @@ final class FrameInterpolator: @unchecked Sendable {
         }
         if writer.status != .completed {
             throw EngineError.exportFailed(writer.error?.localizedDescription ?? "コマの保存に失敗しました")
+        }
+    }
+
+    /// 行きと帰りの動き。動きを読み損ねたとき（大きすぎる動きなど）は、変形させずに重ねるだけにする。
+    private func morphFlow(_ a: CVPixelBuffer, _ b: CVPixelBuffer, accuracy: VNGenerateOpticalFlowRequest.ComputationAccuracy) -> MorphFlow {
+        var result = MorphFlow()
+        guard let smallA = FrameInterpolator.downscaled(a, context: context), let smallB = FrameInterpolator.downscaled(b, context: context),
+              let fab = FrameInterpolator.anyFlow(from: smallA, to: smallB, accuracy: accuracy),
+              let fba = FrameInterpolator.anyFlow(from: smallB, to: smallA, accuracy: accuracy) else { return result }
+        var found: FlowConvention?
+        if fab.builtin {
+            found = FlowConvention(sign: 1, normalized: false)
+        } else {
+            found = FrameInterpolator.learnedConvention.get() ?? FrameInterpolator.calibrate(a: smallA, b: smallB, flow: fab.field)
+            if let known = found { FrameInterpolator.learnedConvention.set(known) }
+        }
+        guard let convention = found, FrameInterpolator.flowHelps(a: smallA, b: smallB, flow: fab.field, convention: convention) else {
+            return result
+        }
+        result.forward = FrameInterpolator.texture(fab.field, device: device)
+        result.backward = FrameInterpolator.texture(fba.field, device: device)
+        let fw: Float = Float(fab.field.width)
+        let fh: Float = Float(fab.field.height)
+        if convention.normalized {
+            result.scale = SIMD2<Float>(convention.sign, convention.sign)
+        } else {
+            result.scale = SIMD2<Float>(convention.sign / fw, convention.sign / fh)
+        }
+        return result
+    }
+
+    private static func morphWriter(output: URL) throws -> AVAssetWriter {
+        try? FileManager.default.removeItem(at: output)
+        return try AVAssetWriter(outputURL: output, fileType: .mov)
+    }
+
+    private static func morphInput(_ writer: AVAssetWriter, width: Int, height: Int, fps: Double) throws -> AVAssetWriterInput {
+        var colors: [String: Any] = [:]
+        colors[AVVideoColorPrimariesKey] = AVVideoColorPrimaries_ITU_R_709_2
+        colors[AVVideoTransferFunctionKey] = AVVideoTransferFunction_ITU_R_709_2
+        colors[AVVideoYCbCrMatrixKey] = AVVideoYCbCrMatrix_ITU_R_709_2
+        let settings: [String: Any] = writerSettings(width: width, height: height, fps: fps, colors: colors)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
+        input.expectsMediaDataInRealTime = false
+        guard writer.canAdd(input) else { throw EngineError.exportFailed("コマを書き出せません") }
+        writer.add(input)
+        return input
+    }
+
+    /// k コマ目を置く時刻（ティック）。合成が隣のコマを拾わないよう、最初以外は半コマ前に置く。
+    private static func morphTicks(_ plan: SmoothCutPlan, index k: Int, after last: Int64) -> Int64 {
+        let half: Double = 0.5 / max(1, plan.fps)
+        let time: Double = k == 0 ? 0 : plan.outputTimes[k] - half
+        let ticks: Int64 = Int64((time * Double(Time.timescale)).rounded())
+        return ticks <= last ? last + 1 : ticks
+    }
+
+    private static func append(_ buffer: CVPixelBuffer, ticks: Int64, input: AVAssetWriterInput,
+                               adaptor: AVAssetWriterInputPixelBufferAdaptor, writer: AVAssetWriter) async throws {
+        while !input.isReadyForMoreMediaData {
+            if writer.status == .failed { break }
+            try await Task.sleep(nanoseconds: 2_000_000)
+        }
+        let time = CMTime(value: ticks, timescale: CMTimeScale(Time.timescale))
+        if !adaptor.append(buffer, withPresentationTime: time) {
+            throw EngineError.exportFailed(writer.error?.localizedDescription ?? "コマの書き出しに失敗しました")
         }
     }
 
