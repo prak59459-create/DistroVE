@@ -121,7 +121,7 @@ enum MediaFormatSupport {
     static let gifExtensions: Set<String> = ["gif"]
     static let modelExtensions: Set<String> = ["usdz", "usd", "usda", "usdc", "obj", "stl", "ply", "abc"]
     /// 入れ物を Swift で読んで MP4 に変える形式（ForeignContainer）
-    static let convertedExtensions: Set<String> = ["mkv", "mka", "mks", "webm", "avi", "ogg", "oga", "ogv", "opus", "flv"]
+    static let convertedExtensions: Set<String> = ["mkv", "mka", "mks", "webm", "avi", "ogg", "oga", "ogv", "opus", "flv", "ts", "mts", "m2ts", "m2t"]
     /// 入れ物の中身が音声だけのことが多い形式
     static let convertedAudioExtensions: Set<String> = ["mka", "ogg", "oga", "opus"]
     /// 中身（WMV・RealVideo など）を端末の仕組みでも自前でも解読できない形式

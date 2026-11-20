@@ -191,14 +191,14 @@ enum ForeignMediaError: Error, LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .notRecognized: return "MKV・WebM・AVI・Ogg・FLV のどれでもありません。"
+        case .notRecognized: return "MKV・WebM・AVI・Ogg・FLV・MPEG-TS のどれでもありません。"
         case .broken(let detail): return "ファイルが壊れているか、対応していない作りです（\(detail)）。"
         }
     }
 }
 
 enum ForeignContainer {
-    static let extensions: Set<String> = ["mkv", "mka", "mks", "webm", "avi", "ogg", "oga", "ogv", "opus", "flv"]
+    static let extensions: Set<String> = ["mkv", "mka", "mks", "webm", "avi", "ogg", "oga", "ogv", "opus", "flv", "ts", "mts", "m2ts", "m2t"]
 
     /// 先頭のしるしで入れ物を見分けて開く。
     static func open(url: URL) throws -> ForeignDemuxer {
@@ -223,6 +223,10 @@ enum ForeignContainer {
         }
         if head.count >= 4 && head.prefix(3) == Data("FLV".utf8) && head[head.startIndex + 3] == 1 {
             return try FLVReader(reader)
+        }
+        let probe: [UInt8] = [UInt8](try reader.peek(192 * 3 + 4))
+        if TSReader.looksLike(probe, size: 188, lead: 0) || TSReader.looksLike(probe, size: 192, lead: 4) {
+            return try TSReader(reader)
         }
         throw ForeignMediaError.notRecognized
     }

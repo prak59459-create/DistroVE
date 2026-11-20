@@ -137,7 +137,8 @@ final class ForeignConversionTests: XCTestCase {
     func testWebMVP8WithAltref() async throws {
         let result = try await convert("vp8-altref.webm")
         let asset = AVURLAsset(url: result.url)
-        let track: AVAssetTrack = try XCTUnwrap(try await asset.loadTracks(withMediaType: .video).first)
+        let tracks: [AVAssetTrack] = try await asset.loadTracks(withMediaType: .video)
+        let track: AVAssetTrack = try XCTUnwrap(tracks.first)
         let size: CGSize = try await track.load(.naturalSize)
         XCTAssertEqual(size.width, 176)
         XCTAssertEqual(size.height, 100)
@@ -192,6 +193,33 @@ final class ForeignConversionTests: XCTestCase {
             XCTFail("Sorenson Spark は読めないはず")
         } catch let EngineError.unsupported(message) {
             XCTAssertTrue(message.contains("Sorenson"), message)
+        }
+    }
+
+    /// AVCHD と同じ M2TS（H.264・AC-3）。
+    func testM2TSH264AndAC3() async throws {
+        let result = try await convert("h264-ac3.m2ts")
+        XCTAssertEqual(result.container, "M2TS")
+        try await check(result, video: true, audio: result.notes.isEmpty)
+    }
+
+    /// MPEG-TS（HEVC・AAC の ADTS）。
+    func testTSHEVCAndAAC() async throws {
+        let result = try await convert("hevc-aac.ts")
+        XCTAssertEqual(result.container, "MPEG-TS")
+        XCTAssertTrue(result.notes.isEmpty, "\(result.notes)")
+        try await check(result, video: true, audio: true)
+    }
+
+    /// MPEG-TS（MPEG-2・MP2）。MPEG-2 と MP2 は端末によって読めないことがあるので、そのときは何が読めないかを伝える。
+    func testTSMPEG2AndMP2() async throws {
+        do {
+            let result = try await convert("mpeg2-mp2.ts")
+            try await check(result, video: true, audio: result.notes.isEmpty)
+            print("MPEG-2・MP2 の変換: 知らせ \(result.notes)")
+        } catch let EngineError.unsupported(message) {
+            XCTAssertTrue(message.contains("MPEG-2"), message)
+            print("MPEG-2 はこの端末で読めない: \(message)")
         }
     }
 

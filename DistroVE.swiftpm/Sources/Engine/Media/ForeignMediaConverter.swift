@@ -81,7 +81,16 @@ enum ForeignMediaConverter {
         let kind: MediaKind = videoURL != nil ? .video : .audio
         let name: String = source.deletingPathExtension().lastPathComponent
         let output: URL = AppPaths.uniqueURL(in: folder, name: name, ext: kind == .video ? "mp4" : "m4a")
-        try await ForeignMediaConverter.mux(video: videoURL, audio: audioURL, audioOffset: offset, output: output)
+        do {
+            try await ForeignMediaConverter.mux(video: videoURL, audio: audioURL, audioOffset: offset, output: output)
+        } catch {
+            // 取り出した音声を端末が読めなかったときは、映像だけにする（映像も無ければ読めないと伝える）
+            guard let only = videoURL, audioURL != nil else { throw error }
+            try? FileManager.default.removeItem(at: output)
+            try await ForeignMediaConverter.mux(video: only, audio: nil, audioOffset: 0, output: output)
+            let label: String = audioTrack?.codecLabel ?? "音声"
+            notes.append("音声（\(label)）をこの端末で読めなかったため、映像だけを取り込みました。")
+        }
         progress?(1)
         let cues: [SubtitleCue] = ForeignMediaConverter.subtitles(subtitleTracks, subtitlePackets)
         return Result(url: output, kind: kind, container: demuxer.containerName, subtitles: cues, notes: notes)

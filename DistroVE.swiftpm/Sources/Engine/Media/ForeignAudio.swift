@@ -58,7 +58,8 @@ final class ForeignAudioExtractor {
     static func mode(for track: ForeignTrack) throws -> (Mode, String) {
         switch track.codec {
         case .aac:
-            if track.codecName == "0x1610" { return (.raw, "aac") }
+            // AVI の 0x1610 と MPEG-TS は、もとから ADTS の見出しが付いている
+            if track.codecName == "0x1610" || track.codecName == "adts" { return (.raw, "aac") }
             guard let p = ForeignAudioExtractor.adtsParameters(track.codecPrivate, sampleRate: track.sampleRate, channels: track.channels) else {
                 throw EngineError.unsupported("AAC の設定が見つかりません")
             }
