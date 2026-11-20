@@ -356,25 +356,35 @@ struct TemplateGallery: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                ForEach(templates) { template in
-                    TemplateRow(template: template, isSelected: selected?.id == template.id) {
-                        selected = template
-                    }
+            templateList
+                .safeAreaInset(edge: .bottom) {
+                    bottomBar
+                }
+                .navigationTitle("テンプレート")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } }
+                }
+                .onChange(of: items) { _, picked in
+                    buildIfReady(picked)
+                }
+        }
+    }
+
+    private var templateList: some View {
+        List {
+            ForEach(templates) { template in
+                TemplateRow(template: template, isSelected: selected?.id == template.id) {
+                    selected = template
                 }
             }
-            .safeAreaInset(edge: .bottom) {
-                bottomBar
-            }
-            .navigationTitle("テンプレート")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } }
-            }
-            .onChange(of: items) { _, picked in
-                if let template = selected, !picked.isEmpty { build(template, items: picked) }
-            }
         }
+    }
+
+    /// 素材を選び終えたら、選んでいるテンプレートで作る。
+    private func buildIfReady(_ picked: [PhotosPickerItem]) {
+        guard let template = selected, !picked.isEmpty else { return }
+        build(template, items: picked)
     }
 
     private var bottomBar: some View {

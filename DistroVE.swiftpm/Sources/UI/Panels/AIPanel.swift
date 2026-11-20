@@ -13,15 +13,29 @@ struct AIPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            captionAndCutTools
+            autoEditTools
+            fixTools
+        }
+        .alert("サーバーでの文字起こし", isPresented: $askServer) {
+            Button("許可して続ける") {
+                settings.allowServerSpeech = true
+                controller.autoCaptions(allowServer: true)
+            }
+            Button("やめる", role: .cancel) {}
+        } message: {
+            Text("この端末は日本語の端末内文字起こしに対応していません。音声だけを Apple のサーバーに送って文字にしてよいですか？ 動画そのものは送りません。")
+        }
+    }
+
+    /// 自動字幕・背景除去・無音カット。
+    private var captionAndCutTools: some View {
+        Group {
             tool("自動字幕", "ai.captions", "話している言葉を文字にして字幕トラックを作ります（日本語）。") {
                 Button("字幕を作る") { startCaptions() }
             }
             tool("背景除去", "ai.removeBackground", "選んだクリップの人物だけを残します。") {
-                Button(controller.selectedClip?.removeBackground == true ? "解除" : "背景を消す") {
-                    guard let clip = controller.selectedClip else { controller.showToast("クリップを選んでください"); return }
-                    let on: Bool = !clip.removeBackground
-                    controller.updateSelected("背景除去") { $0.removeBackground = on }
-                }
+                Button(backgroundButtonTitle) { toggleBackground() }
             }
             tool("無音カット", "ai.silenceCut", "声や音の無いところを自動で切って詰めます。") {
                 VStack(alignment: .leading) {
@@ -30,6 +44,12 @@ struct AIPanel: View {
                     Button("無音を切る") { controller.cutSilence(thresholdDB: silenceDB, minSilence: minSilence) }
                 }
             }
+        }
+    }
+
+    /// BGM に合わせた自動編集・ハイライト・ショート。
+    private var autoEditTools: some View {
+        Group {
             tool("BGM に合わせて自動編集", "ai.beatEdit", "BGM のビートで、メイントラックの素材を切り替えます。") {
                 VStack(alignment: .leading) {
                     Stepper("\(beatsPerCut) 拍ごとに切り替え", value: $beatsPerCut, in: 1...16)
@@ -49,8 +69,14 @@ struct AIPanel: View {
                     Button("ショートにする") { controller.convertToShort(maxSeconds: shortSeconds) }
                 }
             }
+        }
+    }
+
+    /// 手ぶれ補正・ビート検出・音量のそろえ。
+    private var fixTools: some View {
+        Group {
             tool("手ぶれ補正", "ai.stabilize", "選んだ動画の揺れを解析して打ち消します。") {
-                Button(controller.selectedClip?.stabilization == nil ? "補正する" : "解除") { controller.toggleStabilization() }
+                Button(stabilizeButtonTitle) { controller.toggleStabilization() }
             }
             tool("ビート検出", "ai.beatDetect", "選んだ音声（または BGM）からビートマーカーを作ります。") {
                 Button("ビートを探す") { controller.detectBeats(clipID: controller.selectedClip?.id) }
@@ -59,15 +85,23 @@ struct AIPanel: View {
                 Button("そろえる") { controller.normalizeLoudness(all: true) }
             }
         }
-        .alert("サーバーでの文字起こし", isPresented: $askServer) {
-            Button("許可して続ける") {
-                settings.allowServerSpeech = true
-                controller.autoCaptions(allowServer: true)
-            }
-            Button("やめる", role: .cancel) {}
-        } message: {
-            Text("この端末は日本語の端末内文字起こしに対応していません。音声だけを Apple のサーバーに送って文字にしてよいですか？ 動画そのものは送りません。")
+    }
+
+    private var backgroundButtonTitle: String {
+        return controller.selectedClip?.removeBackground == true ? "解除" : "背景を消す"
+    }
+
+    private var stabilizeButtonTitle: String {
+        return controller.selectedClip?.stabilization == nil ? "補正する" : "解除"
+    }
+
+    private func toggleBackground() {
+        guard let clip = controller.selectedClip else {
+            controller.showToast("クリップを選んでください")
+            return
         }
+        let on: Bool = !clip.removeBackground
+        controller.updateSelected("背景除去") { $0.removeBackground = on }
     }
 
     private func startCaptions() {

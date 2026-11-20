@@ -48,37 +48,53 @@ struct EditorView: View {
     private func content(size: CGSize) -> some View {
         let landscape: Bool = size.width > size.height && size.width > 700
         let compact: Bool = horizontalSize == .compact || size.width < 600
-        let timelineHeight: CGFloat = max(170, min(320, size.height * (landscape ? 0.34 : 0.3)))
+        let ratio: CGFloat = landscape ? 0.34 : 0.3
+        let scaledHeight: CGFloat = size.height * ratio
+        let timelineHeight: CGFloat = max(170, min(320, scaledHeight))
         let side: Bool = landscape && settings.inspectorPosition != .bottom && controller.panel != nil
         return VStack(spacing: 0) {
-            EditorTopBar(controller: controller, onClose: close, onExport: { showExport = true }, onRename: {
-                renameText = controller.project.name
-                showRename = true
-            })
+            topBar
             if settings.toolbarAtTop {
                 EditorToolbar(controller: controller)
             }
-            if side {
-                HStack(spacing: 0) {
-                    if settings.inspectorPosition == .left {
-                        InspectorContainer(controller: controller).frame(width: min(380, size.width * 0.34))
-                    }
-                    previewColumn
-                    if settings.inspectorPosition == .right {
-                        InspectorContainer(controller: controller).frame(width: min(380, size.width * 0.34))
-                    }
-                }
-            } else {
-                previewColumn
-                if controller.panel != nil {
-                    InspectorContainer(controller: controller).frame(height: min(300, size.height * 0.32))
-                }
-            }
+            middle(size: size, side: side)
             if !settings.toolbarAtTop {
                 EditorToolbar(controller: controller)
             }
             TimelineRepresentable(controller: controller, colorBlind: settings.colorBlindPalette, compact: compact)
                 .frame(height: timelineHeight)
+        }
+    }
+
+    private var topBar: some View {
+        EditorTopBar(controller: controller, onClose: close, onExport: { showExport = true }, onRename: startRename)
+    }
+
+    private func startRename() {
+        renameText = controller.project.name
+        showRename = true
+    }
+
+    /// プレビューと、設定の場所（左・右・下）に出すインスペクター。
+    @ViewBuilder
+    private func middle(size: CGSize, side: Bool) -> some View {
+        let inspectorWidth: CGFloat = min(380, size.width * 0.34)
+        let inspectorHeight: CGFloat = min(300, size.height * 0.32)
+        if side {
+            HStack(spacing: 0) {
+                if settings.inspectorPosition == .left {
+                    InspectorContainer(controller: controller).frame(width: inspectorWidth)
+                }
+                previewColumn
+                if settings.inspectorPosition == .right {
+                    InspectorContainer(controller: controller).frame(width: inspectorWidth)
+                }
+            }
+        } else {
+            previewColumn
+            if controller.panel != nil {
+                InspectorContainer(controller: controller).frame(height: inspectorHeight)
+            }
         }
     }
 
