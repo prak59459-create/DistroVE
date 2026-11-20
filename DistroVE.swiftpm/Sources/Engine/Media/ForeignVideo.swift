@@ -249,9 +249,23 @@ final class ForeignVideoDecoder {
         return sets.isEmpty ? nil : (sets, lengthSize)
     }
 
+    /// H.264 の NAL の種類（1 バイト目の下位 5 ビット）。
+    static func h264Type(_ nal: Data) -> Int {
+        guard let first = nal.first else { return -1 }
+        let value: Int = Int(first)
+        return value & 0x1F
+    }
+
+    /// HEVC の NAL の種類（1 バイト目の 2〜7 ビット目）。
+    static func hevcType(_ nal: Data) -> Int {
+        guard let first = nal.first else { return -1 }
+        let value: Int = Int(first)
+        return (value >> 1) & 0x3F
+    }
+
     static func h264Format(_ sets: [Data], lengthSize: Int = 4) throws -> CMVideoFormatDescription {
-        let sps: [Data] = sets.filter { ($0.first ?? 0) & 0x1F == 7 }
-        let pps: [Data] = sets.filter { ($0.first ?? 0) & 0x1F == 8 }
+        let sps: [Data] = sets.filter { (set: Data) -> Bool in ForeignVideoDecoder.h264Type(set) == 7 }
+        let pps: [Data] = sets.filter { (set: Data) -> Bool in ForeignVideoDecoder.h264Type(set) == 8 }
         guard let s = sps.first, let p = pps.first else { throw EngineError.unsupported("H.264 の設定（SPS・PPS）が見つかりません") }
         return try ForeignVideoDecoder.withParameterSets([s, p]) { pointers, sizes, count in
             var result: CMVideoFormatDescription?
@@ -263,9 +277,9 @@ final class ForeignVideoDecoder {
     }
 
     static func hevcFormat(_ sets: [Data], lengthSize: Int = 4) throws -> CMVideoFormatDescription {
-        let vps: [Data] = sets.filter { (($0.first ?? 0) >> 1) & 0x3F == 32 }
-        let sps: [Data] = sets.filter { (($0.first ?? 0) >> 1) & 0x3F == 33 }
-        let pps: [Data] = sets.filter { (($0.first ?? 0) >> 1) & 0x3F == 34 }
+        let vps: [Data] = sets.filter { (set: Data) -> Bool in ForeignVideoDecoder.hevcType(set) == 32 }
+        let sps: [Data] = sets.filter { (set: Data) -> Bool in ForeignVideoDecoder.hevcType(set) == 33 }
+        let pps: [Data] = sets.filter { (set: Data) -> Bool in ForeignVideoDecoder.hevcType(set) == 34 }
         guard let v = vps.first, let s = sps.first, let p = pps.first else { throw EngineError.unsupported("HEVC の設定（VPS・SPS・PPS）が見つかりません") }
         return try ForeignVideoDecoder.withParameterSets([v, s, p]) { pointers, sizes, count in
             var result: CMVideoFormatDescription?

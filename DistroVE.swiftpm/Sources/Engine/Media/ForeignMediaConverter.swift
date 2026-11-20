@@ -23,7 +23,7 @@ enum ForeignMediaConverter {
         AppPaths.ensure(work)
         defer { try? FileManager.default.removeItem(at: work) }
         let videoTrack: ForeignTrack? = ForeignMediaConverter.pick(demuxer.tracks, .video)
-        let subtitleTracks: [ForeignTrack] = demuxer.tracks.filter { $0.kind == .subtitle && ($0.codec == .srt || $0.codec == .ass) }
+        let subtitleTracks: [ForeignTrack] = demuxer.tracks.filter { (track: ForeignTrack) -> Bool in ForeignMediaConverter.isTextSubtitle(track) }
         var notes: [String] = []
         var video: VideoPass?
         if let track = videoTrack {
@@ -52,18 +52,21 @@ enum ForeignMediaConverter {
         var subtitlePackets: [Int: [ForeignPacket]] = [:]
         let total: Double = max(0.001, demuxer.duration)
         var lastReport: Double = -1
+        let videoNumber: Int = videoTrack?.number ?? -1
+        let audioNumber: Int = audioTrack?.number ?? -1
+        let subtitleNumbers: Set<Int> = Set(subtitleTracks.map { (track: ForeignTrack) -> Int in track.number })
         while let packet = try demuxer.nextPacket() {
             if Task.isCancelled { throw EngineError.cancelled }
-            if packet.track == videoTrack?.number, let pass = video {
+            if packet.track == videoNumber, let pass = video {
                 try await pass.append(packet)
-            } else if packet.track == audioTrack?.number, let extractor = audio {
+            } else if packet.track == audioNumber, let extractor = audio {
                 do {
                     try extractor.append(packet)
                 } catch {
                     audio = nil
                     notes.append("音声の途中で読めない所があったため、映像だけを取り込みました。")
                 }
-            } else if subtitleTracks.contains(where: { $0.number == packet.track }) {
+            } else if subtitleNumbers.contains(packet.track) {
                 subtitlePackets[packet.track, default: []].append(packet)
             }
             let done: Double = min(0.85, packet.time / total * 0.85)
@@ -77,7 +80,9 @@ enum ForeignMediaConverter {
             notes.append("映像の一部（\(pass.skippedFrames) コマ）を解読できませんでした。")
         }
         let audioURL: URL? = try audio?.finish()
-        let offset: Double = max(0, (audio?.firstTime ?? 0) - (video?.firstTime ?? 0))
+        let audioStart: Double = audio?.firstTime ?? 0
+        let videoStart: Double = video?.firstTime ?? 0
+        let offset: Double = max(0, audioStart - videoStart)
         let kind: MediaKind = videoURL != nil ? .video : .audio
         let name: String = source.deletingPathExtension().lastPathComponent
         let output: URL = AppPaths.uniqueURL(in: folder, name: name, ext: kind == .video ? "mp4" : "m4a")
@@ -94,6 +99,12 @@ enum ForeignMediaConverter {
         progress?(1)
         let cues: [SubtitleCue] = ForeignMediaConverter.subtitles(subtitleTracks, subtitlePackets)
         return Result(url: output, kind: kind, container: demuxer.containerName, subtitles: cues, notes: notes)
+    }
+
+    /// 文字の字幕（SRT・ASS）か。
+    static func isTextSubtitle(_ track: ForeignTrack) -> Bool {
+        if track.kind != .subtitle { return false }
+        return track.codec == .srt || track.codec == .ass
     }
 
     /// 使うトラック（「既定」の印があるものを先に）。
