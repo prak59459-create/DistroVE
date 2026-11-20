@@ -157,15 +157,25 @@ final class ForeignConversionTests: XCTestCase {
         XCTAssertEqual(tracks.count, 1)
     }
 
-    /// Ogg の Vorbis・Opus・FLAC。
-    func testOggAudioFiles() async throws {
-        for name in ["tone.ogg", "tone.opus", "tone-flac.oga"] {
-            let result = try await convert(name)
-            XCTAssertEqual(result.kind, .audio, name)
-            XCTAssertEqual(result.container, "Ogg", name)
-            XCTAssertTrue(result.notes.isEmpty, "\(name): \(result.notes)")
-            try await check(result, video: false, audio: true)
-        }
+    /// Ogg の Vorbis・Opus・FLAC（1 つずつ）。
+    private func checkOgg(_ name: String) async throws {
+        let result = try await convert(name)
+        XCTAssertEqual(result.kind, .audio, name)
+        XCTAssertEqual(result.container, "Ogg", name)
+        XCTAssertTrue(result.notes.isEmpty, "\(name): \(result.notes)")
+        try await check(result, video: false, audio: true)
+    }
+
+    func testOggVorbis() async throws {
+        try await checkOgg("tone.ogg")
+    }
+
+    func testOggOpus() async throws {
+        try await checkOgg("tone.opus")
+    }
+
+    func testOggFLAC() async throws {
+        try await checkOgg("tone-flac.oga")
     }
 
     /// FLV の H.264（B フレームあり）・AAC。

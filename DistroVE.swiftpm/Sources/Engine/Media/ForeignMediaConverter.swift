@@ -93,6 +93,16 @@ enum ForeignMediaConverter {
         return candidates.first { $0.isDefault } ?? candidates.first
     }
 
+    /// 読み手の失敗の説明（元の原因の番号も付ける）。
+    static func describe(_ error: Error?) -> String {
+        guard let error = error as NSError? else { return "取り込み途中のファイルを読めません" }
+        var text: String = "\(error.localizedDescription)（\(error.domain) \(error.code)"
+        if let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError {
+            text += "、\(underlying.domain) \(underlying.code)"
+        }
+        return text + "）"
+    }
+
     /// 自前または端末の仕組みで読める音声
     static let readableAudio: Set<ForeignCodec> = [.aac, .mp3, .mp2, .ac3, .eac3, .flac, .pcm, .opus, .vorbis]
 
@@ -133,8 +143,8 @@ enum ForeignMediaConverter {
         if let url = audio {
             lanes.append(try await ForeignMediaConverter.audioLane(url, writer: writer, offset: audioOffset))
         }
-        for lane in lanes where !lane.reader.startReading() {
-            throw EngineError.unreadable(lane.reader.error?.localizedDescription ?? "取り込み途中のファイルを読めません")
+        for lane in lanes where lane.reader.status == .unknown && !lane.reader.startReading() {
+            throw EngineError.unreadable(ForeignMediaConverter.describe(lane.reader.error))
         }
         guard writer.startWriting() else { throw EngineError.exportFailed(writer.error?.localizedDescription ?? "書き込みを始められません") }
         writer.startSession(atSourceTime: .zero)
@@ -181,7 +191,37 @@ enum ForeignMediaConverter {
         // 44.1kHz はそのまま、それ以外は 48kHz に直してから AAC にする（読み手が周波数を変える）。
         let rate: Double = sourceRate == 44_100 ? 44_100 : 48_000
         let channels: Int = max(1, min(2, sourceChannels))
-        let reader = try AVAssetReader(asset: asset)
+        // 読み手を先に開いて確かめる。開けなければ 48kHz・ステレオで開き直す（モノラルの一部の形式で断られることがある）
+        var attempts: [(rate: Double, channels: Int)] = [(rate, channels)]
+        if channels != 2 || rate != 48_000 { attempts.append((48_000, 2)) }
+        var lastError: Error?
+        for attempt in attempts {
+            let reader = try AVAssetReader(asset: asset)
+            let output = AVAssetReaderAudioMixOutput(audioTracks: [track], audioSettings: ForeignMediaConverter.pcmSettings(attempt.rate, attempt.channels))
+            output.alwaysCopiesSampleData = false
+            reader.add(output)
+            if !reader.startReading() {
+                lastError = reader.error
+                continue
+            }
+            var aac: [String: Any] = [:]
+            aac[AVFormatIDKey] = kAudioFormatMPEG4AAC
+            aac[AVSampleRateKey] = attempt.rate
+            aac[AVNumberOfChannelsKey] = attempt.channels
+            aac[AVChannelLayoutKey] = ForeignMediaConverter.channelLayout(attempt.channels)
+            aac[AVEncoderBitRateKey] = attempt.channels == 1 ? 96_000 : 192_000
+            let input = AVAssetWriterInput(mediaType: .audio, outputSettings: aac)
+            input.expectsMediaDataInRealTime = false
+            guard writer.canAdd(input) else { throw EngineError.exportFailed("音声を入れられません") }
+            writer.add(input)
+            let shift: CMTime = offset > 0.02 ? CMTime(seconds: offset, preferredTimescale: 48_000) : .zero
+            return MuxLane(reader: reader, output: output, input: input, offset: shift)
+        }
+        throw EngineError.unreadable(ForeignMediaConverter.describe(lastError))
+    }
+
+    /// 読み手に頼む 16bit の PCM。
+    static func pcmSettings(_ rate: Double, _ channels: Int) -> [String: Any] {
         var pcm: [String: Any] = [:]
         pcm[AVFormatIDKey] = kAudioFormatLinearPCM
         pcm[AVLinearPCMBitDepthKey] = 16
@@ -190,20 +230,15 @@ enum ForeignMediaConverter {
         pcm[AVLinearPCMIsNonInterleaved] = false
         pcm[AVSampleRateKey] = rate
         pcm[AVNumberOfChannelsKey] = channels
-        let output = AVAssetReaderAudioMixOutput(audioTracks: [track], audioSettings: pcm)
-        output.alwaysCopiesSampleData = false
-        reader.add(output)
-        var aac: [String: Any] = [:]
-        aac[AVFormatIDKey] = kAudioFormatMPEG4AAC
-        aac[AVSampleRateKey] = rate
-        aac[AVNumberOfChannelsKey] = channels
-        aac[AVEncoderBitRateKey] = channels == 1 ? 96_000 : 192_000
-        let input = AVAssetWriterInput(mediaType: .audio, outputSettings: aac)
-        input.expectsMediaDataInRealTime = false
-        guard writer.canAdd(input) else { throw EngineError.exportFailed("音声を入れられません") }
-        writer.add(input)
-        let shift: CMTime = offset > 0.02 ? CMTime(seconds: offset, preferredTimescale: 48_000) : .zero
-        return MuxLane(reader: reader, output: output, input: input, offset: shift)
+        pcm[AVChannelLayoutKey] = ForeignMediaConverter.channelLayout(channels)
+        return pcm
+    }
+
+    /// モノラル・ステレオのチャンネルの並び（AudioChannelLayout をそのまま Data にしたもの）。
+    static func channelLayout(_ channels: Int) -> Data {
+        var layout = AudioChannelLayout()
+        layout.mChannelLayoutTag = channels == 1 ? kAudioChannelLayoutTag_Mono : kAudioChannelLayoutTag_Stereo
+        return Data(bytes: &layout, count: MemoryLayout<AudioChannelLayout>.size)
     }
 }
 

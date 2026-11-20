@@ -37,6 +37,8 @@ final class FLVReader: ForeignDemuxer {
         let wantsVideo: Bool = flags & 0x01 != 0
         let wantsAudio: Bool = flags & 0x04 != 0
         var metadataDuration: Double = 0
+        var metadataWidth: Double = 0
+        var metadataHeight: Double = 0
         var scanned: Int = 0
         // 設定（シーケンスヘッダー）が出そろうまで読む。そのあいだの映像・音声は queue に入る
         while scanned < 120 && !finished {
@@ -44,6 +46,8 @@ final class FLVReader: ForeignDemuxer {
             scanned += 1
             if tag.type == 18 {
                 metadataDuration = max(metadataDuration, FLVReader.metadataDuration(tag.data))
+                metadataWidth = max(metadataWidth, FLVReader.metadataNumber(tag.data, "width"))
+                metadataHeight = max(metadataHeight, FLVReader.metadataNumber(tag.data, "height"))
             } else {
                 handle(tag)
             }
@@ -51,7 +55,14 @@ final class FLVReader: ForeignDemuxer {
             let audioReady: Bool = !wantsAudio || sawAudioFrame
             if videoReady && audioReady && (sawVideoFrame || sawAudioFrame) { break }
         }
-        if let track = video { tracks.append(track) }
+        if var track = video {
+            // FLV のトラックには大きさが無い。onMetaData にあれば使う（無ければ解読器が SPS から求める）
+            if metadataWidth >= 16 && metadataHeight >= 16 {
+                track.width = Int(metadataWidth)
+                track.height = Int(metadataHeight)
+            }
+            tracks.append(track)
+        }
         if let track = audio { tracks.append(track) }
         if tracks.isEmpty { throw ForeignMediaError.broken("FLV に映像も音声もありません") }
         duration = metadataDuration > 0 ? metadataDuration : lastTagTime()
@@ -273,10 +284,17 @@ final class FLVReader: ForeignDemuxer {
 
     /// onMetaData の "duration"（AMF0 の数値）。
     static func metadataDuration(_ data: Data) -> Double {
+        return metadataNumber(data, "duration")
+    }
+
+    /// onMetaData の数値（AMF0：名前の長さ 2 バイト・名前・型 0・8 バイトの浮動小数）。
+    static func metadataNumber(_ data: Data, _ name: String) -> Double {
         let bytes: [UInt8] = [UInt8](data)
-        let key: [UInt8] = [0x00, 0x08] + [UInt8]("duration".utf8)
+        let nameBytes: [UInt8] = [UInt8](name.utf8)
+        let length: Int = nameBytes.count
+        let key: [UInt8] = [UInt8(truncatingIfNeeded: length >> 8), UInt8(truncatingIfNeeded: length)] + nameBytes
         guard bytes.count >= key.count + 9 else { return 0 }
-        for i in 0...(bytes.count - key.count - 9) where bytes[i] == 0x00 && bytes[i + 1] == 0x08 {
+        for i in 0...(bytes.count - key.count - 9) where bytes[i] == key[0] && bytes[i + 1] == key[1] {
             if Array(bytes[i..<(i + key.count)]) != key { continue }
             let type: Int = i + key.count
             if bytes[type] != 0x00 { continue }

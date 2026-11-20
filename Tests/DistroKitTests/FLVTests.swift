@@ -24,6 +24,8 @@ final class FLVTests: XCTestCase {
         let video: ForeignTrack = try XCTUnwrap(demuxer.tracks.first { $0.kind == .video })
         let audio: ForeignTrack = try XCTUnwrap(demuxer.tracks.first { $0.kind == .audio })
         XCTAssertEqual(video.codec, .h264)
+        XCTAssertEqual(video.width, 96, "onMetaData の幅")
+        XCTAssertEqual(video.height, 64, "onMetaData の高さ")
         XCTAssertEqual(video.codecPrivate.first, 1, "avcC の版")
         XCTAssertEqual(audio.codec, .aac)
         XCTAssertGreaterThanOrEqual(audio.codecPrivate.count, 2, "AudioSpecificConfig")

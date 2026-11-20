@@ -149,11 +149,18 @@ final class ForeignVideoDecoder {
         let config: Data = track.codecPrivate
         switch track.codec {
         case .h264:
+            if config.first == 1 && track.width < 16, let found = ForeignVideoDecoder.avcCSets(config) {
+                // 大きさの分からない入れ物（FLV など）：SPS から大きさを求める
+                return try ForeignVideoDecoder.h264Format(found.sets, lengthSize: found.lengthSize)
+            }
             if config.first == 1 { return try ForeignVideoDecoder.withAtom("avcC", config, kCMVideoCodecType_H264, width, height) }
             annexB = true
             let sets: [Data] = ForeignVideoDecoder.parameterSets(firstFrame ?? config, h264: true)
             return try ForeignVideoDecoder.h264Format(sets)
         case .hevc:
+            if config.first == 1 && track.width < 16, let found = ForeignVideoDecoder.hvcCSets(config) {
+                return try ForeignVideoDecoder.hevcFormat(found.sets, lengthSize: found.lengthSize)
+            }
             if config.first == 1 { return try ForeignVideoDecoder.withAtom("hvcC", config, kCMVideoCodecType_HEVC, width, height) }
             annexB = true
             let sets: [Data] = ForeignVideoDecoder.parameterSets(firstFrame ?? config, h264: false)
@@ -195,7 +202,54 @@ final class ForeignVideoDecoder {
         return made
     }
 
-    static func h264Format(_ sets: [Data]) throws -> CMVideoFormatDescription {
+    /// avcC の中の SPS・PPS と、長さの欄のバイト数。
+    static func avcCSets(_ config: Data) -> (sets: [Data], lengthSize: Int)? {
+        let bytes: [UInt8] = [UInt8](config)
+        if bytes.count < 7 { return nil }
+        let lengthSize: Int = Int(bytes[4] & 0x3) + 1
+        var sets: [Data] = []
+        var i: Int = 5
+        for group in 0..<2 {
+            guard i < bytes.count else { break }
+            let count: Int = group == 0 ? Int(bytes[i] & 0x1F) : Int(bytes[i])
+            i += 1
+            for _ in 0..<count {
+                guard i + 2 <= bytes.count else { return nil }
+                let length: Int = (Int(bytes[i]) << 8) | Int(bytes[i + 1])
+                i += 2
+                guard i + length <= bytes.count else { return nil }
+                sets.append(Data(bytes[i..<(i + length)]))
+                i += length
+            }
+        }
+        return sets.isEmpty ? nil : (sets, lengthSize)
+    }
+
+    /// hvcC の中の VPS・SPS・PPS と、長さの欄のバイト数。
+    static func hvcCSets(_ config: Data) -> (sets: [Data], lengthSize: Int)? {
+        let bytes: [UInt8] = [UInt8](config)
+        if bytes.count < 23 { return nil }
+        let lengthSize: Int = Int(bytes[21] & 0x3) + 1
+        let arrays: Int = Int(bytes[22])
+        var sets: [Data] = []
+        var i: Int = 23
+        for _ in 0..<arrays {
+            guard i + 3 <= bytes.count else { return nil }
+            let count: Int = (Int(bytes[i + 1]) << 8) | Int(bytes[i + 2])
+            i += 3
+            for _ in 0..<count {
+                guard i + 2 <= bytes.count else { return nil }
+                let length: Int = (Int(bytes[i]) << 8) | Int(bytes[i + 1])
+                i += 2
+                guard i + length <= bytes.count else { return nil }
+                sets.append(Data(bytes[i..<(i + length)]))
+                i += length
+            }
+        }
+        return sets.isEmpty ? nil : (sets, lengthSize)
+    }
+
+    static func h264Format(_ sets: [Data], lengthSize: Int = 4) throws -> CMVideoFormatDescription {
         let sps: [Data] = sets.filter { ($0.first ?? 0) & 0x1F == 7 }
         let pps: [Data] = sets.filter { ($0.first ?? 0) & 0x1F == 8 }
         guard let s = sps.first, let p = pps.first else { throw EngineError.unsupported("H.264 の設定（SPS・PPS）が見つかりません") }
@@ -203,12 +257,12 @@ final class ForeignVideoDecoder {
             var result: CMVideoFormatDescription?
             let status: OSStatus = CMVideoFormatDescriptionCreateFromH264ParameterSets(allocator: kCFAllocatorDefault, parameterSetCount: count,
                                                                                       parameterSetPointers: pointers, parameterSetSizes: sizes,
-                                                                                      nalUnitHeaderLength: 4, formatDescriptionOut: &result)
+                                                                                      nalUnitHeaderLength: Int32(lengthSize), formatDescriptionOut: &result)
             return status == noErr ? result : nil
         }
     }
 
-    static func hevcFormat(_ sets: [Data]) throws -> CMVideoFormatDescription {
+    static func hevcFormat(_ sets: [Data], lengthSize: Int = 4) throws -> CMVideoFormatDescription {
         let vps: [Data] = sets.filter { (($0.first ?? 0) >> 1) & 0x3F == 32 }
         let sps: [Data] = sets.filter { (($0.first ?? 0) >> 1) & 0x3F == 33 }
         let pps: [Data] = sets.filter { (($0.first ?? 0) >> 1) & 0x3F == 34 }
@@ -217,7 +271,7 @@ final class ForeignVideoDecoder {
             var result: CMVideoFormatDescription?
             let status: OSStatus = CMVideoFormatDescriptionCreateFromHEVCParameterSets(allocator: kCFAllocatorDefault, parameterSetCount: count,
                                                                                       parameterSetPointers: pointers, parameterSetSizes: sizes,
-                                                                                      nalUnitHeaderLength: 4, extensions: nil, formatDescriptionOut: &result)
+                                                                                      nalUnitHeaderLength: Int32(lengthSize), extensions: nil, formatDescriptionOut: &result)
             return status == noErr ? result : nil
         }
     }
