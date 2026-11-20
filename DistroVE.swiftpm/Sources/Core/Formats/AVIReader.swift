@@ -253,6 +253,15 @@ final class AVIReader: ForeignDemuxer {
         }
     }
 
+    /// i から 00 00 01 が並んでいるか（式を分けて、型の確認を速くする）。
+    private static func startCode(_ bytes: [UInt8], _ i: Int) -> Bool {
+        let zero: UInt8 = 0
+        let one: UInt8 = 1
+        if bytes[i] != zero { return false }
+        if bytes[i + 1] != zero { return false }
+        return bytes[i + 2] == one
+    }
+
     /// 索引がないときに、中身からキーフレームかどうかを見る。
     static func isKeyframe(_ codec: ForeignCodec, _ data: Data) -> Bool {
         let bytes: [UInt8] = [UInt8](data.prefix(4096))
@@ -260,15 +269,19 @@ final class AVIReader: ForeignDemuxer {
         case .mpeg4:
             // VOP の開始（00 00 01 B6）の次の 2 ビットが 0 なら I-VOP
             if bytes.count < 5 { return false }
-            for i in 0..<(bytes.count - 4) where bytes[i] == 0 && bytes[i + 1] == 0 && bytes[i + 2] == 1 && bytes[i + 3] == 0xB6 {
-                return bytes[i + 4] >> 6 == 0
+            let vop: UInt8 = 0xB6
+            for i in 0..<(bytes.count - 4) where startCode(bytes, i) && bytes[i + 3] == vop {
+                let kind: UInt8 = bytes[i + 4] >> 6
+                return kind == 0
             }
             return false
         case .h264:
             // NAL の種類 5（IDR）
             if bytes.count < 4 { return false }
-            for i in 0..<(bytes.count - 3) where bytes[i] == 0 && bytes[i + 1] == 0 && bytes[i + 2] == 1 {
-                if bytes[i + 3] & 0x1F == 5 { return true }
+            let idr: UInt8 = 5
+            let mask: UInt8 = 0x1F
+            for i in 0..<(bytes.count - 3) where startCode(bytes, i) {
+                if bytes[i + 3] & mask == idr { return true }
             }
             return false
         default:
