@@ -14,6 +14,8 @@ final class MediaStore: @unchecked Sendable {
         case reversed
         /// オプティカルフローでコマを足したもの（Q99）
         case interpolated
+        /// 逆再生の音声（Q34）
+        case reversedAudio
     }
 
     private let openScopes = Locked<[UUID: URL]>([:])
@@ -32,6 +34,12 @@ final class MediaStore: @unchecked Sendable {
         case .reversed:
             if let path = asset.reversedPath {
                 let url: URL = AppPaths.media.appendingPathComponent(path)
+                if FileManager.default.fileExists(atPath: url.path) { return url }
+            }
+            return nil
+        case .reversedAudio:
+            if let path = asset.reversedPath {
+                let url: URL = AppPaths.media.appendingPathComponent(MediaJobs.reversedAudioPath(path))
                 if FileManager.default.fileExists(atPath: url.path) { return url }
             }
             return nil
@@ -288,6 +296,7 @@ final class MediaStore: @unchecked Sendable {
         }
         if let reversed = asset.reversedPath {
             try? FileManager.default.removeItem(at: AppPaths.media.appendingPathComponent(reversed))
+            try? FileManager.default.removeItem(at: AppPaths.media.appendingPathComponent(MediaJobs.reversedAudioPath(reversed)))
         }
         if let smooth = asset.interpolated?.path {
             try? FileManager.default.removeItem(at: AppPaths.media.appendingPathComponent(smooth))

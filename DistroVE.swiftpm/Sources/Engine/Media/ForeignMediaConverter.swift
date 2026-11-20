@@ -153,7 +153,9 @@ enum ForeignMediaConverter {
             sourceRate = basic.mSampleRate
             sourceChannels = Int(basic.mChannelsPerFrame)
         }
-        let rate: Double = [8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000].contains(sourceRate) ? sourceRate : 48_000
+        // AAC の書き手は、標本化周波数ごとに使えるビットレートが決まっている（22.05kHz・モノラルで 96kbps は断られる）。
+        // 44.1kHz はそのまま、それ以外は 48kHz に直してから AAC にする（読み手が周波数を変える）。
+        let rate: Double = sourceRate == 44_100 ? 44_100 : 48_000
         let channels: Int = max(1, min(2, sourceChannels))
         let reader = try AVAssetReader(asset: asset)
         var pcm: [String: Any] = [:]

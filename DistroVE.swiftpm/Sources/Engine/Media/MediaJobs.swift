@@ -64,7 +64,7 @@ enum MediaJobs {
         #endif
     }
 
-    /// 逆再生用の動画を作る（Q34）。メモリを抑えるため、後ろから短い区間ずつ読んで逆順に書く。音声は含めない。
+    /// 逆再生用の動画を作る（Q34）。メモリを抑えるため、後ろから短い区間ずつ読んで逆順に書く。音声は別のファイル（-audio.caf）に逆順で書く。
     static func makeReversed(for asset: MediaAsset, progress: (@Sendable (Double) -> Void)? = nil) async throws -> String {
         guard let url = MediaStore.shared.url(for: asset) else { throw EngineError.missingMedia(asset.name) }
         let avAsset = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
@@ -143,7 +143,96 @@ enum MediaJobs {
         if writer.status != .completed {
             throw EngineError.exportFailed(writer.error?.localizedDescription ?? "reverse")
         }
-        return "Reversed/" + output.lastPathComponent
+        let path: String = "Reversed/" + output.lastPathComponent
+        if asset.hasAudio {
+            let audioOutput: URL = AppPaths.media.appendingPathComponent(MediaJobs.reversedAudioPath(path))
+            do {
+                try await MediaJobs.makeReversedAudio(from: avAsset, duration: duration, to: audioOutput)
+            } catch EngineError.cancelled {
+                try? FileManager.default.removeItem(at: audioOutput)
+                throw EngineError.cancelled
+            } catch {
+                // 音声だけ作れなかったときは、これまでどおり音なしの逆再生にする（映像は使える）
+                try? FileManager.default.removeItem(at: audioOutput)
+            }
+        }
+        return path
+    }
+
+    /// 逆再生の音声のファイル（逆再生の映像と同じ場所・名前に -audio を付ける）。
+    static func reversedAudioPath(_ reversedPath: String) -> String {
+        let base: String = (reversedPath as NSString).deletingPathExtension
+        return base + "-audio.caf"
+    }
+
+    /// 逆再生の音声（Q34）。後ろから 5 秒ずつ読み、サンプルを逆の順に並べて CAF（PCM）に書く。
+    static func makeReversedAudio(from avAsset: AVURLAsset, duration: Time, to output: URL) async throws {
+        guard let track = try await avAsset.loadTracks(withMediaType: .audio).first else { return }
+        let formats: [CMFormatDescription] = try await track.load(.formatDescriptions)
+        var rate: Double = 48_000
+        var channels: Int = 2
+        if let format = formats.first, let basic = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee {
+            if basic.mSampleRate >= 8_000 { rate = basic.mSampleRate }
+            channels = Int(basic.mChannelsPerFrame)
+        }
+        channels = max(1, min(2, channels))
+        guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate, channels: AVAudioChannelCount(channels), interleaved: false) else {
+            throw EngineError.exportFailed("逆再生の音声を作れません")
+        }
+        try? FileManager.default.removeItem(at: output)
+        let file = try AVAudioFile(forWriting: output, settings: format.settings, commonFormat: .pcmFormatFloat32, interleaved: false)
+        var settings: [String: Any] = [:]
+        settings[AVFormatIDKey] = kAudioFormatLinearPCM
+        settings[AVLinearPCMBitDepthKey] = 32
+        settings[AVLinearPCMIsFloatKey] = true
+        settings[AVLinearPCMIsBigEndianKey] = false
+        settings[AVLinearPCMIsNonInterleaved] = false
+        settings[AVSampleRateKey] = rate
+        settings[AVNumberOfChannelsKey] = channels
+        var end: Double = duration.seconds
+        while end > 0 {
+            if Task.isCancelled { throw EngineError.cancelled }
+            let start: Double = max(0, end - 5)
+            let samples: [Float] = try MediaJobs.readPCM(avAsset, track: track, from: start, to: end, settings: settings)
+            let frames: Int = samples.count / channels
+            end = start
+            if frames == 0 { continue }
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)),
+                  let data = buffer.floatChannelData else { continue }
+            buffer.frameLength = AVAudioFrameCount(frames)
+            for c in 0..<channels {
+                let channel: UnsafeMutablePointer<Float> = data[c]
+                for f in 0..<frames {
+                    channel[f] = samples[(frames - 1 - f) * channels + c]
+                }
+            }
+            try file.write(from: buffer)
+        }
+    }
+
+    /// 音声の一部を 32bit 浮動小数（チャンネル交互）で読む。
+    static func readPCM(_ avAsset: AVURLAsset, track: AVAssetTrack, from start: Double, to end: Double, settings: [String: Any]) throws -> [Float] {
+        let reader = try AVAssetReader(asset: avAsset)
+        reader.timeRange = CMTimeRange(start: CMTime(seconds: start, preferredTimescale: 48_000), end: CMTime(seconds: end, preferredTimescale: 48_000))
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: settings)
+        reader.add(output)
+        guard reader.startReading() else { throw EngineError.unreadable(reader.error?.localizedDescription ?? "音声を読めません") }
+        var samples: [Float] = []
+        while let sample = output.copyNextSampleBuffer() {
+            guard let block = CMSampleBufferGetDataBuffer(sample) else { continue }
+            let length: Int = CMBlockBufferGetDataLength(block)
+            let count: Int = length / MemoryLayout<Float>.size
+            if count == 0 { continue }
+            let offset: Int = samples.count
+            samples.append(contentsOf: repeatElement(0, count: count))
+            samples.withUnsafeMutableBytes { (raw: UnsafeMutableRawBufferPointer) in
+                if let base = raw.baseAddress {
+                    CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: count * MemoryLayout<Float>.size,
+                                               destination: base + offset * MemoryLayout<Float>.size)
+                }
+            }
+        }
+        return samples
     }
 }
 
@@ -202,36 +291,71 @@ enum AudioProcessor {
         AppPaths.ensure(folder)
         let outputURL: URL = folder.appendingPathComponent(UUID().uuidString + ".caf")
         let renderFormat: AVAudioFormat = engine.manualRenderingFormat
-        let output = try AVAudioFile(forWriting: outputURL, settings: renderFormat.settings, commonFormat: .pcmFormatFloat32, interleaved: false)
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: renderFormat, frameCapacity: engine.manualRenderingMaximumFrameCount) else {
-            throw EngineError.exportFailed("音声のバッファーを作れません")
-        }
-        let total: AVAudioFramePosition = input.length
-        var gate = NoiseGate(amount: processing.denoise, sampleRate: renderFormat.sampleRate)
-        while engine.manualRenderingSampleTime < total {
-            if Task.isCancelled {
-                engine.stop()
-                throw EngineError.cancelled
+        // 書き込みのファイルはこの区切りの中だけで使う（抜けたところで閉じて、ノイズ除去で読み直せるようにする）
+        do {
+            let output = try AVAudioFile(forWriting: outputURL, settings: renderFormat.settings, commonFormat: .pcmFormatFloat32, interleaved: false)
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: renderFormat, frameCapacity: engine.manualRenderingMaximumFrameCount) else {
+                throw EngineError.exportFailed("音声のバッファーを作れません")
             }
-            let remaining: AVAudioFramePosition = total - engine.manualRenderingSampleTime
-            let frames: AVAudioFrameCount = AVAudioFrameCount(min(AVAudioFramePosition(buffer.frameCapacity), remaining))
-            let status: AVAudioEngineManualRenderingStatus = try engine.renderOffline(frames, to: buffer)
-            switch status {
-            case .success:
-                if processing.denoise > 0.001 { gate.process(buffer) }
-                try output.write(from: buffer)
-            case .insufficientDataFromInputNode, .cannotDoInCurrentContext:
-                continue
-            case .error:
-                throw EngineError.exportFailed("音声の処理に失敗しました")
-            @unknown default:
-                throw EngineError.exportFailed("音声の処理に失敗しました")
+            let total: AVAudioFramePosition = input.length
+            var gate = NoiseGate(amount: processing.denoise, sampleRate: renderFormat.sampleRate)
+            while engine.manualRenderingSampleTime < total {
+                if Task.isCancelled {
+                    engine.stop()
+                    throw EngineError.cancelled
+                }
+                let remaining: AVAudioFramePosition = total - engine.manualRenderingSampleTime
+                let frames: AVAudioFrameCount = AVAudioFrameCount(min(AVAudioFramePosition(buffer.frameCapacity), remaining))
+                let status: AVAudioEngineManualRenderingStatus = try engine.renderOffline(frames, to: buffer)
+                switch status {
+                case .success:
+                    if processing.denoise > 0.001 && processing.denoise < 0.05 { gate.process(buffer) }
+                    try output.write(from: buffer)
+                case .insufficientDataFromInputNode, .cannotDoInCurrentContext:
+                    continue
+                case .error:
+                    throw EngineError.exportFailed("音声の処理に失敗しました")
+                @unknown default:
+                    throw EngineError.exportFailed("音声の処理に失敗しました")
+                }
+                progress?(Double(engine.manualRenderingSampleTime) / Double(max(1, total)))
             }
-            progress?(Double(engine.manualRenderingSampleTime) / Double(max(1, total)))
         }
         player.stop()
         engine.stop()
+        if processing.denoise >= 0.05 {
+            try AudioProcessor.spectralDenoise(outputURL, strength: processing.denoise)
+        }
         return "ProcessedAudio/" + outputURL.lastPathComponent
+    }
+
+    /// スペクトル減算のノイズ除去（Q53）。60 秒ずつ読み、区間ごとにノイズの形を学んで引く。
+    static func spectralDenoise(_ url: URL, strength: Double) throws {
+        let cleaned: URL = url.deletingLastPathComponent().appendingPathComponent(UUID().uuidString + ".caf")
+        // 読むファイルと書くファイルは、この区切りを抜けたところで閉じる（閉じてから入れ替える）
+        do {
+            let input = try AVAudioFile(forReading: url)
+            let format: AVAudioFormat = input.processingFormat
+            let output = try AVAudioFile(forWriting: cleaned, settings: format.settings, commonFormat: .pcmFormatFloat32, interleaved: false)
+            let chunk: AVAudioFrameCount = AVAudioFrameCount(format.sampleRate * 60)
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunk) else { return }
+            while input.framePosition < input.length {
+                try input.read(into: buffer, frameCount: chunk)
+                let frames: Int = Int(buffer.frameLength)
+                if frames == 0 { break }
+                guard let channels = buffer.floatChannelData else { break }
+                for c in 0..<Int(format.channelCount) {
+                    let samples: [Float] = Array(UnsafeBufferPointer(start: channels[c], count: frames))
+                    let result: [Float] = SpectralDenoiser.process(samples, strength: strength)
+                    result.withUnsafeBufferPointer { (pointer: UnsafeBufferPointer<Float>) in
+                        if let base = pointer.baseAddress { channels[c].update(from: base, count: frames) }
+                    }
+                }
+                try output.write(from: buffer)
+            }
+        }
+        try FileManager.default.removeItem(at: url)
+        try FileManager.default.moveItem(at: cleaned, to: url)
     }
 
     /// 再生の予約だけをする。async 版の scheduleFile は再生し終わるまで戻らないため、

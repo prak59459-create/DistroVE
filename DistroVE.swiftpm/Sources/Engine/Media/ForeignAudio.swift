@@ -135,13 +135,23 @@ final class ForeignAudioExtractor {
         return (profile, index, channelConfig)
     }
 
+    /// ADTS の 7 バイトの見出し。式を細かく分けて型を書く（まとめて書くと Xcode 16 の型の確認が終わらない）。
     static func adtsHeader(profile: Int, index: Int, channels: Int, payload: Int) -> Data {
         let length: Int = payload + 7
-        let b2: UInt8 = UInt8(((profile & 0x3) << 6) | ((index & 0xF) << 2) | ((channels >> 2) & 0x1))
-        let b3: UInt8 = UInt8(((channels & 0x3) << 6) | ((length >> 11) & 0x3))
-        let b4: UInt8 = UInt8((length >> 3) & 0xFF)
-        let b5: UInt8 = UInt8(((length & 0x7) << 5) | 0x1F)
-        return Data([0xFF, 0xF1, b2, b3, b4, b5, 0xFC])
+        let p: Int = (profile & 0x3) << 6
+        let i: Int = (index & 0xF) << 2
+        let c: Int = (channels >> 2) & 0x1
+        let c2: Int = (channels & 0x3) << 6
+        let l1: Int = (length >> 11) & 0x3
+        let l2: Int = (length >> 3) & 0xFF
+        let l3: Int = (length & 0x7) << 5
+        var header: [UInt8] = [0xFF, 0xF1]
+        header.append(UInt8(truncatingIfNeeded: p | i | c))
+        header.append(UInt8(truncatingIfNeeded: c2 | l1))
+        header.append(UInt8(truncatingIfNeeded: l2))
+        header.append(UInt8(truncatingIfNeeded: l3 | 0x1F))
+        header.append(0xFC)
+        return Data(header)
     }
 
     // MARK: FLAC

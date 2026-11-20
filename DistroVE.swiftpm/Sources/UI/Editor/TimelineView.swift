@@ -64,9 +64,9 @@ final class TimelineCanvasView: UIView, UIGestureRecognizerDelegate {
         isOpaque = true
         contentMode = .redraw
         backgroundColor = Theme.backgroundUI
-        isAccessibilityElement = true
+        // 読み上げ（Q69）：中の再生位置とクリップを 1 つずつ読む入れ物にする
+        isAccessibilityElement = false
         accessibilityLabel = "タイムライン"
-        accessibilityHint = "指 1 本で左右にスクロール、ピンチで拡大縮小、長押しでクリップを移動"
 
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
         pan.maximumNumberOfTouches = 1
@@ -160,6 +160,67 @@ final class TimelineCanvasView: UIView, UIGestureRecognizerDelegate {
         case .audio: return compact ? 36 : 42
         case .subtitle: return 30
         }
+    }
+
+    // MARK: 読み上げ（Q69）
+
+    override var accessibilityElements: [Any]? {
+        get { return makeAccessibilityElements() }
+        set {}
+    }
+
+    /// 読み上げの要素は作り直さずに使い回す（作り直すと、読み上げの選択位置が先頭に戻ってしまう）。
+    private var playheadElement: PlayheadAccessibilityElement?
+    private var clipElements: [UUID: ClipAccessibilityElement] = [:]
+
+    private func makeAccessibilityElements() -> [Any] {
+        guard let controller = controller else { return [] }
+        let project: Project = controller.project
+        let playhead: PlayheadAccessibilityElement = playheadElement ?? PlayheadAccessibilityElement(accessibilityContainer: self)
+        playheadElement = playhead
+        playhead.canvas = self
+        playhead.accessibilityFrameInContainerSpace = CGRect(x: playheadX - 22, y: 0, width: 44, height: bounds.height)
+        var elements: [Any] = [playhead]
+        var kept: [UUID: ClipAccessibilityElement] = [:]
+        for row in rows(project) {
+            let track: Track = project.tracks[row.trackIndex]
+            for clip in track.clips {
+                guard let frame = visibleFrame(clip, row: row) else { continue }
+                let element: ClipAccessibilityElement = clipElements[clip.id] ?? ClipAccessibilityElement(accessibilityContainer: self)
+                configure(element, clip: clip, track: track, frame: frame, controller: controller)
+                kept[clip.id] = element
+                elements.append(element)
+            }
+        }
+        clipElements = kept
+        return elements
+    }
+
+    /// 画面に見えている部分（見えていなければ nil）。
+    private func visibleFrame(_ clip: Clip, row: Row) -> CGRect? {
+        let width: CGFloat = max(2, CGFloat(clip.duration.seconds) * pointsPerSecond)
+        let visible: CGRect = CGRect(x: x(for: clip.start), y: row.y, width: width, height: row.height).intersection(bounds)
+        if visible.isNull || visible.width < 4 { return nil }
+        return visible
+    }
+
+    private func configure(_ element: ClipAccessibilityElement, clip: Clip, track: Track, frame: CGRect, controller: EditorController) {
+        if element.clipID != clip.id || element.accessibilityCustomActions == nil {
+            element.clipID = clip.id
+            element.accessibilityCustomActions = ClipAccessibilityElement.actions(clip.id, controller: controller)
+        }
+        element.controller = controller
+        let text: (label: String, value: String) = TimelineAccessibility.describe(clip, track: track)
+        element.accessibilityLabel = text.label
+        element.accessibilityValue = text.value
+        element.accessibilityTraits = controller.selectedClipIDs.contains(clip.id) ? [.button, .selected] : [.button]
+        element.accessibilityFrameInContainerSpace = frame
+    }
+
+    /// 再生位置を秒だけ動かす（読み上げの上下スワイプ）。
+    func stepPlayhead(_ seconds: Double) {
+        guard let controller = controller else { return }
+        controller.seek(to: max(.zero, controller.currentTime + Time(seconds: seconds)))
     }
 
     /// 上から：字幕 → 映像（重なりの上から順）→ 音声。
@@ -821,5 +882,83 @@ final class TimelineCanvasView: UIView, UIGestureRecognizerDelegate {
     @objc private func handleHover(_ g: UIHoverGestureRecognizer) {
         // マウス・トラックパッドで端に重ねたときにカーソルの代わりに再描画だけ行う
         if g.state == .changed { return }
+    }
+}
+
+/// 再生位置（上下のスワイプで 1 秒ずつ動かせる）。
+final class PlayheadAccessibilityElement: UIAccessibilityElement {
+    weak var canvas: TimelineCanvasView?
+
+    override var accessibilityLabel: String? {
+        get { return "再生位置" }
+        set {}
+    }
+
+    override var accessibilityValue: String? {
+        get { return MainActor.assumeIsolated { canvas?.controller?.currentTime.shortLabel } }
+        set {}
+    }
+
+    override var accessibilityHint: String? {
+        get { return "上下にスワイプすると 1 秒ずつ動きます" }
+        set {}
+    }
+
+    override var accessibilityTraits: UIAccessibilityTraits {
+        get { return .adjustable }
+        set {}
+    }
+
+    override func accessibilityIncrement() {
+        MainActor.assumeIsolated { canvas?.stepPlayhead(1) }
+    }
+
+    override func accessibilityDecrement() {
+        MainActor.assumeIsolated { canvas?.stepPlayhead(-1) }
+    }
+}
+
+/// 1 つのクリップ（ダブルタップで選ぶ。分割・削除・複製はアクションから）。
+final class ClipAccessibilityElement: UIAccessibilityElement {
+    var clipID: UUID?
+    weak var controller: EditorController?
+
+    override func accessibilityActivate() -> Bool {
+        guard let id = clipID else { return false }
+        return MainActor.assumeIsolated {
+            guard let controller = controller else { return false }
+            controller.select(id)
+            return true
+        }
+    }
+
+    @MainActor
+    static func actions(_ id: UUID, controller: EditorController) -> [UIAccessibilityCustomAction] {
+        weak var target: EditorController? = controller
+        let split = UIAccessibilityCustomAction(name: "再生位置で分割") { _ in
+            MainActor.assumeIsolated {
+                target?.select(id)
+                target?.splitAtPlayhead()
+                UIAccessibility.post(notification: .layoutChanged, argument: nil)
+            }
+            return true
+        }
+        let duplicate = UIAccessibilityCustomAction(name: "複製") { _ in
+            MainActor.assumeIsolated {
+                target?.select(id)
+                target?.duplicateSelection()
+                UIAccessibility.post(notification: .layoutChanged, argument: nil)
+            }
+            return true
+        }
+        let remove = UIAccessibilityCustomAction(name: "削除") { _ in
+            MainActor.assumeIsolated {
+                target?.select(id)
+                target?.deleteSelection(ripple: false)
+                UIAccessibility.post(notification: .layoutChanged, argument: nil)
+            }
+            return true
+        }
+        return [split, duplicate, remove]
     }
 }

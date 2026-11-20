@@ -64,3 +64,17 @@ final class AdaptivityTests: XCTestCase {
         XCTAssertEqual(decoded.interpolated, made)
     }
 }
+
+/// タイムラインの読み上げ（Q69）。
+final class TimelineAccessibilityTests: XCTestCase {
+    func testClipDescription() {
+        var clip = Clip(kind: .video, name: "海", start: Time(seconds: 65), duration: Time(seconds: 3.5))
+        clip.speed.rate = 2
+        let track = Track(kind: .video, name: "映像 1")
+        let text: (label: String, value: String) = TimelineAccessibility.describe(clip, track: track)
+        XCTAssertEqual(text.label, "動画：海")
+        XCTAssertEqual(text.value, "1:05 から 3.5 秒、2x")
+        XCTAssertEqual(TimelineAccessibility.length(Time(seconds: 125)), "2 分 5 秒")
+        XCTAssertEqual(TimelineAccessibility.length(Time(seconds: 4)), "4 秒")
+    }
+}

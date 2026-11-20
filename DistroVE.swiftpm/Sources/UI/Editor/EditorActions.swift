@@ -222,6 +222,25 @@ extension EditorController {
         }
     }
 
+    /// 話者の自動判別（Q57）。speakers が nil なら人数も決める。字幕ごとに話者の番号（色）を付ける。
+    func detectSpeakers(_ speakers: Int?) {
+        runJob("話者の判別") { controller, progress in
+            let result: [UUID: Int] = try await SpeakerDetector.assign(project: controller.project, speakers: speakers, progress: progress)
+            if result.isEmpty {
+                controller.showToast("声のある字幕が見つかりません")
+                return
+            }
+            controller.apply("話者の自動判別") { p in
+                for t in p.tracks.indices where p.tracks[t].kind == .subtitle {
+                    for c in p.tracks[t].cues.indices {
+                        if let speaker = result[p.tracks[t].cues[c].id] { p.tracks[t].cues[c].speaker = speaker }
+                    }
+                }
+            }
+            controller.showToast("話者を \(Set(result.values).count) 人に分けました（色は字幕のスタイルで変えられます）")
+        }
+    }
+
     /// ファイルの中にあった字幕を、そのクリップの位置に合わせて足す。
     func addEmbeddedSubtitles(_ subtitles: [UUID: [SubtitleCue]]) {
         if subtitles.isEmpty { return }

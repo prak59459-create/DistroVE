@@ -236,11 +236,16 @@ final class CompositionBuilder: @unchecked Sendable {
                 let fromVideo: Bool = clip.kind == .video && track.kind == .video
                 let fromAudio: Bool = clip.kind == .audio && track.kind == .audio
                 if !(fromVideo || fromAudio) { continue }
-                if clip.audio.isMuted || clip.speed.reversed { continue }
+                if clip.audio.isMuted { continue }
                 guard let asset = project.asset(clip.mediaID), asset.hasAudio else { continue }
                 var url: URL?
+                if clip.speed.reversed {
+                    // 逆再生の音声（Q34）。作る前の素材では音なしのまま
+                    guard let reversed = media.url(for: asset, variant: .reversedAudio) else { continue }
+                    url = reversed
+                }
                 let processing: AudioProcessing = clip.audio.processing
-                if processing.isActive && processing.isRenderedUpToDate, let path = processing.renderedPath {
+                if url == nil && processing.isActive && processing.isRenderedUpToDate, let path = processing.renderedPath {
                     let processed: URL = AppPaths.media.appendingPathComponent(path)
                     if FileManager.default.fileExists(atPath: processed.path) { url = processed }
                 }
@@ -257,7 +262,8 @@ final class CompositionBuilder: @unchecked Sendable {
                     continue
                 }
                 let map = SpeedMap(settings: clip.speed)
-                try insertBody(target, source: sourceTrack, clip: clip, map: map, base: clip.sourceStart, mediaDuration: loaded.duration)
+                let base: Time = clip.speed.reversed ? max(.zero, loaded.duration - clip.sourceStart - clip.sourceDuration) : clip.sourceStart
+                try insertBody(target, source: sourceTrack, clip: clip, map: map, base: base, mediaDuration: loaded.duration)
                 let params: AVMutableAudioMixInputParameters = parameters[target.trackID] ?? AVMutableAudioMixInputParameters(track: target)
                 params.audioTimePitchAlgorithm = clip.speed.preservePitch ? .spectral : .varispeed
                 CompositionBuilder.addVolume(params, clip: clip, trackVolume: track.volume)

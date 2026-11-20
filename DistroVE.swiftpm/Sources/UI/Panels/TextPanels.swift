@@ -107,6 +107,33 @@ struct TextEditorPanel: View {
     }
 }
 
+/// 話者の自動判別（Q57）。声の高さと響きで字幕を話者ごとに分け、話者の色を付ける。
+struct SpeakerDetectionRow: View {
+    @ObservedObject var controller: EditorController
+    @State private var speakers: Int = 0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            PanelTitle(text: "話者")
+            HStack {
+                Picker("人数", selection: $speakers) {
+                    Text("人数は自動").tag(0)
+                    ForEach(2...4, id: \.self) { n in Text("\(n) 人").tag(n) }
+                }
+                .pickerStyle(.menu)
+                Button { controller.detectSpeakers(speakers == 0 ? nil : speakers) } label: {
+                    Label("話者を自動で判別", systemImage: "person.2.wave.2")
+                }
+                .buttonStyle(.bordered)
+            }
+            .font(.caption)
+            Text("声の高さと響きから話者を分けます（端末内で処理）。")
+                .font(.caption2)
+                .foregroundStyle(Theme.subtext)
+        }
+    }
+}
+
 /// 字幕（Q56〜Q60）。手入力・SRT の読み込みと書き出し・スタイル・話者の色・ずれ補正・自動翻訳。
 struct SubtitlesPanel: View {
     @ObservedObject var controller: EditorController
@@ -130,6 +157,7 @@ struct SubtitlesPanel: View {
             }
             if let track = controller.subtitleTrack {
                 SubtitleStyleEditor(controller: controller, track: track)
+                SpeakerDetectionRow(controller: controller)
                 TranslationSection(controller: controller)
                 PanelTitle(text: "字幕の一覧（\(track.cues.count) 件）")
                 ForEach(track.cues) { cue in
