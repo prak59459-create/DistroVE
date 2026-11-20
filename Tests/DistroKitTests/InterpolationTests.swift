@@ -347,8 +347,9 @@ final class InterpolationTests: XCTestCase {
             XCTAssertGreaterThan(frame.centroid, previous - 1.5, "コマ \(k)")
             XCTAssertLessThan(frame.centroid - previous, 14, "コマ \(k)")
             XCTAssertLessThan(frame.centroid, after.centroid + 1.5, "コマ \(k)")
-            // 二重にならない（クロスフェードなら中間の明るさが大きく増える）
-            XCTAssertLessThan(frame.halfTone, before.halfTone + 250, "コマ \(k)")
+            // 二重にならない。クロスフェードなら左右 24 画素ずつの帯が半分の明るさになり、中間の明るさが 1,400 画素ほど増える。
+            // 光学フローでも大きく動く縁は少しにじむ（実測で 350〜450 画素）ので、その間で分ける
+            XCTAssertLessThan(frame.halfTone, before.halfTone + 700, "コマ \(k)")
             XCTAssertGreaterThan(Double(frame.bright), Double(before.bright) * 0.7, "コマ \(k)")
             previous = frame.centroid
         }
