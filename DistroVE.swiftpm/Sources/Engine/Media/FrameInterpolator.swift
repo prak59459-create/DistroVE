@@ -75,14 +75,22 @@ final class FrameInterpolator: @unchecked Sendable {
         if let smallA = FrameInterpolator.downscaled(a, context: context), let smallB = FrameInterpolator.downscaled(b, context: context),
            let fab = FrameInterpolator.anyFlow(from: smallA, to: smallB, accuracy: accuracy),
            let fba = FrameInterpolator.anyFlow(from: smallB, to: smallA, accuracy: accuracy) {
-            let convention: FlowConvention = fab.builtin ? FlowConvention(sign: 1, normalized: false)
-                : (FrameInterpolator.calibrate(a: smallA, b: smallB, flow: fab.field) ?? FlowConvention(sign: 1, normalized: false))
-            forward = FrameInterpolator.texture(fab.field, device: device)
-            backward = FrameInterpolator.texture(fba.field, device: device)
-            let fw: Float = Float(fab.field.width)
-            let fh: Float = Float(fab.field.height)
-            scale = convention.normalized ? SIMD2<Float>(convention.sign, convention.sign)
-                : SIMD2<Float>(convention.sign / fw, convention.sign / fh)
+            var found: FlowConvention?
+            if fab.builtin {
+                found = FlowConvention(sign: 1, normalized: false)
+            } else {
+                found = FrameInterpolator.learnedConvention.get() ?? FrameInterpolator.calibrate(a: smallA, b: smallB, flow: fab.field)
+                if let known = found { FrameInterpolator.learnedConvention.set(known) }
+            }
+            // 動きを読み損ねたとき（大きすぎる動きなど）は、変形させずに重ねるだけにする
+            if let convention = found, FrameInterpolator.flowHelps(a: smallA, b: smallB, flow: fab.field, convention: convention) {
+                forward = FrameInterpolator.texture(fab.field, device: device)
+                backward = FrameInterpolator.texture(fba.field, device: device)
+                let fw: Float = Float(fab.field.width)
+                let fh: Float = Float(fab.field.height)
+                scale = convention.normalized ? SIMD2<Float>(convention.sign, convention.sign)
+                    : SIMD2<Float>(convention.sign / fw, convention.sign / fh)
+            }
         }
         try? FileManager.default.removeItem(at: output)
         let writer = try AVAssetWriter(outputURL: output, fileType: .mov)
@@ -314,41 +322,75 @@ final class FrameInterpolator: @unchecked Sendable {
 
     /// 向き（±）と単位（画素・割合）の 4 通りのうち、A(x) ≈ B(x + F(x)) をいちばんよく満たすもの。動きが小さすぎれば nil。
     static func calibrate(a: CVPixelBuffer, b: CVPixelBuffer, flow: FlowField) -> FlowConvention? {
-        let candidates: [FlowConvention] = [FlowConvention(sign: 1, normalized: false), FlowConvention(sign: -1, normalized: false),
-                                            FlowConvention(sign: 1, normalized: true), FlowConvention(sign: -1, normalized: true)]
+        guard let scores = conventionErrors(a: a, b: b, flow: flow) else { return nil }
+        var best: Int?
+        for (k, value) in scores.errors.enumerated() {
+            guard let e = value else { continue }
+            if let current = best, let known = scores.errors[current], known <= e { continue }
+            best = k
+        }
+        guard let chosen = best, let error = scores.errors[chosen], error < scores.baseline * 0.85 else { return nil }
+        return conventions[chosen]
+    }
+
+    /// 向き（±）と単位（画素・割合）の 4 通り。
+    static let conventions: [FlowConvention] = [FlowConvention(sign: 1, normalized: false), FlowConvention(sign: -1, normalized: false),
+                                                FlowConvention(sign: 1, normalized: true), FlowConvention(sign: -1, normalized: true)]
+
+    /// 一度確かめた向きと単位（OS の版で決まるので、アプリを閉じるまで使い回す）
+    static let learnedConvention = Locked<FlowConvention?>(nil)
+
+    /// convention で A を動かすと B に十分近づくか（動きを読み損ねたときは間を作らず重ねるだけにするため）。
+    static func flowHelps(a: CVPixelBuffer, b: CVPixelBuffer, flow: FlowField, convention: FlowConvention) -> Bool {
+        guard let scores = conventionErrors(a: a, b: b, flow: flow),
+              let index = conventions.firstIndex(of: convention), let error = scores.errors[index] else { return false }
+        // 止まっている絵どうしなら、動かさなくても同じ
+        if scores.baseline < 1 { return true }
+        return error < scores.baseline * 0.8
+    }
+
+    /// 4 通りそれぞれで A(x) と B(x + F(x)) の差を足したもの（nil は、絵の外へ大きく飛び出す動きになるので候補にしない）と、動かさないときの差。
+    /// 小さな物が無地の背景の上を動く絵では、単位を取り違えて「物がとても遠くへ飛ぶ」と読むと背景どうしが重なって差が小さく見えるので、飛び出す候補は除く。
+    static func conventionErrors(a: CVPixelBuffer, b: CVPixelBuffer, flow: FlowField) -> (errors: [Double?], baseline: Double)? {
         CVPixelBufferLockBaseAddress(a, .readOnly)
         CVPixelBufferLockBaseAddress(b, .readOnly)
         defer {
             CVPixelBufferUnlockBaseAddress(a, .readOnly)
             CVPixelBufferUnlockBaseAddress(b, .readOnly)
         }
-        guard let imageA = LumaReader(a), let imageB = LumaReader(b) else { return nil }
-        let field: FlowField = flow
+        guard let imageA = LumaReader(a), let imageB = LumaReader(b), flow.width > 0, flow.height > 0 else { return nil }
+        let candidates: [FlowConvention] = conventions
         var errors: [Double] = Array(repeating: 0, count: candidates.count)
+        var far: [Int] = Array(repeating: 0, count: candidates.count)
         var baseline: Double = 0
         let steps: Int = 40
+        let limit: Double = 0.75 * Double(max(imageA.width, imageA.height))
+        var points: Int = 0
         for j in 1..<steps {
             for i in 1..<steps {
                 let x: Double = Double(imageA.width * i) / Double(steps)
                 let y: Double = Double(imageA.height * j) / Double(steps)
                 let lumaA: Double = imageA.value(x, y)
                 baseline += abs(lumaA - imageB.value(x, y))
-                let sample: (dx: Float, dy: Float) = field.at(Int(x * Double(field.width) / Double(imageA.width)),
-                                                            Int(y * Double(field.height) / Double(imageA.height)))
+                points += 1
+                let sample: (dx: Float, dy: Float) = flow.at(Int(x * Double(flow.width) / Double(imageA.width)),
+                                                           Int(y * Double(flow.height) / Double(imageA.height)))
                 let f: (Double, Double) = (Double(sample.dx), Double(sample.dy))
                 for (k, c) in candidates.enumerated() {
-                    let dx: Double = c.normalized ? f.0 * Double(imageA.width) : f.0 * Double(imageA.width) / Double(field.width)
-                    let dy: Double = c.normalized ? f.1 * Double(imageA.height) : f.1 * Double(imageA.height) / Double(field.height)
+                    let dx: Double = c.normalized ? f.0 * Double(imageA.width) : f.0 * Double(imageA.width) / Double(flow.width)
+                    let dy: Double = c.normalized ? f.1 * Double(imageA.height) : f.1 * Double(imageA.height) / Double(flow.height)
+                    if (dx * dx + dy * dy).squareRoot() > limit { far[k] += 1 }
                     let s: Double = Double(c.sign)
                     errors[k] += abs(lumaA - imageB.value(x + s * dx, y + s * dy))
                 }
             }
         }
-        var best: Int = 0
-        for k in 1..<errors.count where errors[k] < errors[best] {
-            best = k
+        let allowed: Int = max(1, points / 200)
+        var result: [Double?] = []
+        for k in 0..<candidates.count {
+            result.append(far[k] > allowed ? nil : errors[k])
         }
-        return errors[best] < baseline * 0.85 ? candidates[best] : nil
+        return (result, baseline)
     }
 
     /// 動きの大きさ（上位 5% の長さ。出力の画素で、2 コマの間にどれだけ動くか）。
@@ -848,7 +890,8 @@ private final class RetimeSession {
             // 自前の推定は「A の各点が B で動いた先（画素）」と決まっている
             convention = FrameInterpolator.FlowConvention(sign: 1, normalized: false)
         } else if convention == nil {
-            convention = FrameInterpolator.calibrate(a: smallA, b: smallB, flow: forward)
+            convention = FrameInterpolator.learnedConvention.get() ?? FrameInterpolator.calibrate(a: smallA, b: smallB, flow: forward)
+            if let found = convention { FrameInterpolator.learnedConvention.set(found) }
         }
         let used: FrameInterpolator.FlowConvention = convention ?? FrameInterpolator.FlowConvention(sign: 1, normalized: false)
         state.forward = flowTexture(forward)

@@ -25,7 +25,7 @@ final class InterpolationTests: XCTestCase {
     private let squareSize: Int = 48
 
     /// 市松模様の四角が 1 コマに 8 画素ずつ右へ動く動画。cutAt を渡すと、そのコマからは横じまの別の場面になる。
-    private func makeMovingSquare(frames: Int, fps: Int, cutAt: Int? = nil, step: Int = 8) async throws -> URL {
+    private func makeMovingSquare(frames: Int, fps: Int, cutAt: Int? = nil, step: Int = 8, gradient: Bool = false) async throws -> URL {
         let url: URL = root.appendingPathComponent("square-\(UUID().uuidString).mov")
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         var settings: [String: Any] = [:]
@@ -53,7 +53,7 @@ final class InterpolationTests: XCTestCase {
             if let cut = cutAt, i >= cut {
                 drawStripes(buffer, offset: i - cut)
             } else {
-                draw(buffer, left: 20 + i * step, top: 96)
+                draw(buffer, left: 20 + i * step, top: 96, gradient: gradient)
             }
             XCTAssertTrue(adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(i), timescale: CMTimeScale(fps))))
         }
@@ -63,7 +63,8 @@ final class InterpolationTests: XCTestCase {
         return url
     }
 
-    private func draw(_ buffer: CVPixelBuffer, left: Int, top: Int) {
+    /// gradient なら、市松模様の代わりに斜めの明るさの変化（くり返しの無い模様。大きな動きでも読み違えにくい）。
+    private func draw(_ buffer: CVPixelBuffer, left: Int, top: Int, gradient: Bool = false) {
         CVPixelBufferLockBaseAddress(buffer, [])
         defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
         let base: UnsafeMutablePointer<UInt8> = CVPixelBufferGetBaseAddress(buffer)!.assumingMemoryBound(to: UInt8.self)
@@ -72,7 +73,9 @@ final class InterpolationTests: XCTestCase {
             for x in 0..<width {
                 let inside: Bool = x >= left && x < left + squareSize && y >= top && y < top + squareSize
                 let checker: Bool = ((x - left) / 8 + (y - top) / 8) % 2 == 0
-                let value: UInt8 = inside ? (checker ? 255 : 200) : 30
+                let ramp: Int = 160 + 95 * ((x - left) + (y - top)) / (2 * squareSize)
+                let pattern: UInt8 = gradient ? UInt8(max(160, min(255, ramp))) : (checker ? 255 : 200)
+                let value: UInt8 = inside ? pattern : 30
                 let p: Int = y * bytesPerRow + x * 4
                 base[p] = value
                 base[p + 1] = value
@@ -298,7 +301,7 @@ final class InterpolationTests: XCTestCase {
 
     /// スムースカット：切れ目をはさむ区間は、光学フローで変形させたコマになる（二重に重ならず、区間の端で絵が飛ばない）。
     func testSmoothCutMorphsAcrossAJumpCut() async throws {
-        let source: URL = try await makeMovingSquare(frames: 30, fps: 30, step: 3)
+        let source: URL = try await makeMovingSquare(frames: 30, fps: 30, step: 2, gradient: true)
         let asset: MediaAsset = try await MediaStore.shared.importFile(at: source, copy: true)
         var project = Project(name: "smooth", canvas: CanvasSettings(aspect: .landscape4x3, shortSide: 240, fps: 30))
         project.media.append(asset)
@@ -350,6 +353,7 @@ final class InterpolationTests: XCTestCase {
             previous = frame.centroid
         }
         XCTAssertLessThan(after.centroid - previous, 14)
+        // 区間の前（A の 11 コマ目）から後ろ（B の 24 コマ目）まで 13 コマぶん（26 画素）進む
         XCTAssertGreaterThan(after.centroid - before.centroid, 20)
     }
 
