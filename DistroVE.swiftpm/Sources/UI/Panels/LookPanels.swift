@@ -170,7 +170,7 @@ struct FiltersPanel: View {
             Button {
                 showImporter = true
             } label: {
-                Label("LUT（.cube）を読み込む", systemImage: "square.and.arrow.down")
+                DVLabel("LUT（.cube）を読み込む", icon: "export.lut")
             }
             .buttonStyle(.bordered)
             .font(.footnote)
@@ -293,20 +293,13 @@ struct EffectsPanel: View {
                 PanelTitle(text: "追加")
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 8) {
                     ForEach(EffectKind.allCases, id: \.self) { kind in
-                        Button {
+                        IconChoiceButton(title: kind.label, icon: kind.iconID) {
                             controller.updateSelected("エフェクトを追加") { c in
                                 var effect = VideoEffect(kind: kind)
                                 effect.beatSync = kind.supportsBeatSync && !controller.project.beatTimes.isEmpty
                                 c.effects.append(effect)
                             }
-                        } label: {
-                            VStack(spacing: 3) {
-                                Image(systemName: kind.symbol)
-                                Text(kind.label).font(.caption2).lineLimit(1)
-                            }
-                            .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(.bordered)
                     }
                 }
                 if controller.project.beatTimes.isEmpty {
@@ -329,7 +322,7 @@ struct EffectEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Image(systemName: effect.kind.symbol)
+                DVImage(effect.kind.iconID)
                 Text(effect.kind.label).font(.footnote.weight(.semibold))
                 Spacer()
                 if effect.kind.supportsBeatSync {
@@ -343,9 +336,10 @@ struct EffectEditor: View {
                     let id: UUID = effect.id
                     controller.updateSelected("エフェクトを削除") { $0.effects.removeAll { $0.id == id } }
                 } label: {
-                    Image(systemName: "trash")
+                    DVImage("effect.remove")
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("エフェクトを外す")
             }
             ForEach(effect.kind.specs, id: \.key) { spec in
                 let param: Param = effect.params.param(spec)

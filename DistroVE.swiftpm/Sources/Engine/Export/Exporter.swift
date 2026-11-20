@@ -77,12 +77,13 @@ final class Exporter: @unchecked Sendable {
         let share: Double = 0.6
         var done: Int = 0
         let flag: Locked<Bool> = cancelled
+        let all: Int = total
         for item in work {
             if isCancelled { throw EngineError.cancelled }
             let offset: Int = done
             let count: Int = item.frames
             let report: @Sendable (Double) -> Void = { value in
-                progress(share * (Double(offset) + value * Double(count)) / Double(total))
+                progress(share * (Double(offset) + value * Double(count)) / Double(all))
             }
             do {
                 _ = try await MediaJobs.makeRetimed(clip: item.clip, asset: item.asset, fps: fps, progress: report,

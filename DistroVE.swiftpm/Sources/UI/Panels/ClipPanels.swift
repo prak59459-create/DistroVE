@@ -38,7 +38,7 @@ struct FrameInterpolationRows: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             PanelTitle(text: "コマの補間")
-            ChipPicker(items: FrameInterpolation.allCases, selection: clip.speed.interpolation, label: { $0.label }) { mode in
+            ChipPicker(items: FrameInterpolation.allCases, selection: clip.speed.interpolation, label: { $0.label }, icon: { $0.iconID }) { mode in
                 controller.setInterpolation(mode)
             }
             Text(clip.speed.interpolation.detail)
@@ -46,7 +46,7 @@ struct FrameInterpolationRows: View {
                 .foregroundStyle(Theme.subtext)
             PanelTitle(text: "モーションブラー")
             ChipPicker(items: MotionBlur.choices, selection: FrameInterpolationRows.nearest(clip.speed.motionBlur),
-                       label: { MotionBlur.label($0) }) { value in
+                       label: { MotionBlur.label($0) }, icon: { $0 > 0.001 ? "speed.motionBlur" : "anim.none" }) { value in
                 controller.setMotionBlur(value)
             }
             status
@@ -67,25 +67,25 @@ struct FrameInterpolationRows: View {
         switch state {
         case .notNeeded:
             if clip.speed.makesFrames {
-                note("今の速さとフレームレートでは、素材のコマをそのまま使います。", icon: "checkmark.circle")
+                note("今の速さとフレームレートでは、素材のコマをそのまま使います。", icon: "status.ok")
             }
         case .ready:
-            note("\(fps)fps のコマを作成済みです。書き出しのフレームレートが違うときは書き出しの前に作ります。", icon: "checkmark.circle.fill")
+            note("\(fps)fps のコマを作成済みです。書き出しのフレームレートが違うときは書き出しの前に作ります。", icon: "status.done")
         case .missing:
             HStack(spacing: 8) {
-                note("まだ作っていません（プレビューはコマの繰り返しです）", icon: "hourglass")
+                note("まだ作っていません（プレビューはコマの繰り返しです）", icon: "status.waiting")
                 Spacer(minLength: 4)
                 Button("コマを作る") { controller.makeRetimed(clip.id) }
                     .buttonStyle(.borderedProminent)
                     .font(.caption)
             }
         case .needsReverse:
-            note("逆再生の準備が終わると作れます", icon: "arrow.uturn.backward")
+            note("逆再生の準備が終わると作れます", icon: "status.reversePending")
         }
     }
 
     private func note(_ text: String, icon: String) -> some View {
-        Label(text, systemImage: icon)
+        DVLabel(text, icon: icon)
             .font(.caption2)
             .foregroundStyle(Theme.subtext)
     }
@@ -106,7 +106,7 @@ struct TransformPanel: View {
         if let clip = controller.selectedClip {
             VStack(alignment: .leading, spacing: 6) {
                 if clip.kind == .video || clip.kind == .image || clip.kind == .gif {
-                    ChipPicker(items: FitMode.allCases, selection: clip.fitMode, label: { $0.label }) { mode in
+                    ChipPicker(items: FitMode.allCases, selection: clip.fitMode, label: { $0.label }, icon: { $0.iconID }) { mode in
                         controller.updateSelected("収め方") { $0.fitMode = mode }
                     }
                 }
@@ -125,10 +125,10 @@ struct TransformPanel: View {
                 HStack {
                     Button {
                         controller.updateSelected("左右反転") { $0.transform.flipHorizontal.toggle() }
-                    } label: { Label("左右反転", systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right") }
+                    } label: { DVLabel("左右反転", icon: "edit.flipHorizontal") }
                     Button {
                         controller.updateSelected("上下反転") { $0.transform.flipVertical.toggle() }
-                    } label: { Label("上下反転", systemImage: "arrow.up.and.down.righttriangle.up.righttriangle.down") }
+                    } label: { DVLabel("上下反転", icon: "edit.flipVertical") }
                     Spacer()
                     Button("すべてリセット") {
                         controller.updateSelected("変形をリセット") { $0.transform = Transform() }
@@ -183,14 +183,14 @@ struct SpeedPanel: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(SpeedMap.presets, id: \.name) { preset in
-                            Button(preset.name) { controller.setSpeedCurve(preset.points) }
-                                .buttonStyle(.bordered)
-                                .font(.caption)
+                            IconChoiceButton(title: preset.name, icon: "speed." + preset.id, selected: clip.speed.curve == preset.points) {
+                                controller.setSpeedCurve(preset.points)
+                            }
+                            .frame(width: 82)
                         }
                         if clip.speed.hasCurve {
-                            Button("カーブを解除") { controller.setSpeed(1) }
-                                .buttonStyle(.bordered)
-                                .font(.caption)
+                            IconChoiceButton(title: "カーブを解除", icon: "speed.curveOff") { controller.setSpeed(1) }
+                                .frame(width: 82)
                         }
                     }
                 }
@@ -293,11 +293,11 @@ struct AudioFXPanel: View {
             let processing: AudioProcessing = clip.audio.processing
             VStack(alignment: .leading, spacing: 10) {
                 PanelTitle(text: "イコライザー")
-                ChipPicker(items: EQPreset.allCases, selection: processing.eq, label: { $0.label }) { eq in
+                ChipPicker(items: EQPreset.allCases, selection: processing.eq, label: { $0.label }, icon: { $0.iconID }) { eq in
                     controller.updateSelected("イコライザー") { $0.audio.processing.eq = eq }
                 }
                 PanelTitle(text: "ボイスチェンジ")
-                ChipPicker(items: VoicePreset.allCases, selection: processing.voice, label: { $0.label }) { voice in
+                ChipPicker(items: VoicePreset.allCases, selection: processing.voice, label: { $0.label }, icon: { $0.iconID }) { voice in
                     controller.updateSelected("ボイスチェンジ") { $0.audio.processing.voice = voice }
                 }
                 ParamRow(label: "ノイズ除去", range: 0...1, value: processing.denoise, onChange: { v in
@@ -331,19 +331,17 @@ struct TransitionPanel: View {
                 Text("選んだクリップと、その前のクリップのつなぎ目にかかります。")
                     .font(.caption)
                     .foregroundStyle(Theme.subtext)
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 8) {
-                    Button("なし") { controller.updateSelected("トランジション") { $0.transitionIn = nil } }
-                        .buttonStyle(.bordered)
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                    IconChoiceButton(title: "なし", icon: "anim.none", selected: clip.transitionIn == nil) {
+                        controller.updateSelected("トランジション") { $0.transitionIn = nil }
+                    }
                     ForEach(TransitionKind.allCases, id: \.self) { kind in
-                        Button(kind.label) {
+                        IconChoiceButton(title: kind.label, icon: kind.iconID, selected: clip.transitionIn?.kind == kind) {
                             let duration: Time = clip.transitionIn?.duration ?? Time(seconds: 0.5)
                             controller.updateSelected("トランジション") { $0.transitionIn = ClipTransition(kind: kind, duration: duration) }
                         }
-                        .buttonStyle(.bordered)
-                        .tint(clip.transitionIn?.kind == kind ? Theme.accent : nil)
                     }
                 }
-                .font(.caption)
                 if let transition = clip.transitionIn {
                     ParamRow(label: "長さ", range: 0.1...2, value: transition.duration.seconds, format: "%.2f秒", onChange: { v in
                         controller.updateSelected("トランジションの長さ", coalesce: "transition-duration") { $0.transitionIn?.duration = Time(seconds: v) }
@@ -392,17 +390,15 @@ struct AnimationPanel: View {
     private func animationChips(current: AnimationKind?, _ select: @escaping (AnimationKind?) -> Void) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                Button("なし") { select(nil) }
-                    .buttonStyle(.bordered)
-                    .tint(current == nil ? Theme.accent : nil)
+                IconChoiceButton(title: "なし", icon: "anim.none", selected: current == nil) { select(nil) }
+                    .frame(width: 64)
                 ForEach(AnimationKind.allCases, id: \.self) { kind in
-                    Button(kind.label) { select(kind) }
-                        .buttonStyle(.bordered)
-                        .tint(current == kind ? Theme.accent : nil)
+                    IconChoiceButton(title: kind.label, icon: kind.iconID, selected: current == kind) { select(kind) }
+                        .frame(width: 64)
                 }
             }
+            .padding(.vertical, 2)
         }
-        .font(.caption)
     }
 }
 
@@ -415,14 +411,13 @@ struct BlendPanel: View {
             VStack(alignment: .leading, spacing: 10) {
                 ClipParamRow(controller: controller, clip: clip, label: "不透明度", path: \.transform.opacity, range: 0...1, defaultValue: 1)
                 PanelTitle(text: "ブレンド")
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 6) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
                     ForEach(LayerBlend.allCases, id: \.self) { mode in
-                        Button(mode.label) { controller.updateSelected("ブレンド") { $0.blend = mode } }
-                            .buttonStyle(.bordered)
-                            .tint(clip.blend == mode ? Theme.accent : nil)
+                        IconChoiceButton(title: mode.label, icon: mode.iconID, selected: clip.blend == mode) {
+                            controller.updateSelected("ブレンド") { $0.blend = mode }
+                        }
                     }
                 }
-                .font(.caption2)
                 if clip.kind == .video || clip.kind == .image {
                     Toggle("背景を消す（人物を切り抜く・端末内 AI）", isOn: Binding<Bool>(get: { clip.removeBackground },
                                                                          set: { v in controller.updateSelected("背景除去") { $0.removeBackground = v } }))
@@ -444,20 +439,21 @@ struct MaskPanel: View {
             VStack(alignment: .leading, spacing: 6) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        Button("なし") { controller.updateSelected("マスク") { $0.mask = nil } }
-                            .buttonStyle(.bordered)
+                        IconChoiceButton(title: "なし", icon: "mask.none", selected: clip.mask == nil) {
+                            controller.updateSelected("マスク") { $0.mask = nil }
+                        }
+                        .frame(width: 64)
                         ForEach(MaskShape.allCases, id: \.self) { shape in
-                            Button(shape.label) {
+                            IconChoiceButton(title: shape.label, icon: shape.iconID, selected: clip.mask?.shape == shape) {
                                 controller.updateSelected("マスク") { c in
                                     if c.mask == nil { c.mask = MaskSettings(shape: shape) } else { c.mask?.shape = shape }
                                 }
                             }
-                            .buttonStyle(.bordered)
-                            .tint(clip.mask?.shape == shape ? Theme.accent : nil)
+                            .frame(width: 64)
                         }
                     }
+                    .padding(.vertical, 2)
                 }
-                .font(.caption)
                 if clip.mask != nil {
                     ClipParamRow(controller: controller, clip: clip, label: "中心 X", path: \.maskCenterX, range: 0...1, defaultValue: 0.5)
                     ClipParamRow(controller: controller, clip: clip, label: "中心 Y", path: \.maskCenterY, range: 0...1, defaultValue: 0.5)
@@ -603,7 +599,7 @@ struct KeyframeRow: View {
             Button {
                 controller.toggleKey(path, name: name)
             } label: {
-                Image(systemName: index == nil ? "diamond" : "diamond.fill")
+                DVImage(index == nil ? "param.key" : "param.key.on")
             }
             .buttonStyle(.plain)
             .foregroundStyle(Theme.accent)
@@ -611,7 +607,7 @@ struct KeyframeRow: View {
                 Button {
                     controller.updateSelected("キーフレームを消す") { c in c[keyPath: path].removeAllKeys() }
                 } label: {
-                    Image(systemName: "trash")
+                    DVImage("keyframe.delete")
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(Theme.subtext)

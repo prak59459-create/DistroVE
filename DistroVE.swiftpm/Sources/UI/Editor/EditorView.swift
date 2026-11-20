@@ -105,7 +105,7 @@ struct EditorTopBar: View {
     var body: some View {
         HStack(spacing: 16) {
             Button(action: onClose) {
-                Label("ホーム", systemImage: "chevron.left")
+                DVLabel("ホーム", icon: "editor.home")
             }
             .accessibilityLabel("ホームに戻る")
             Button(action: onRename) {
@@ -114,22 +114,28 @@ struct EditorTopBar: View {
                     .lineLimit(1)
             }
             Spacer()
-            Button { controller.undo() } label: { Image(systemName: "arrow.uturn.backward") }
+            Button { controller.undo() } label: { DVImage("editor.undo") }
                 .disabled(!controller.canUndo)
                 .accessibilityLabel("元に戻す")
-            Button { controller.redo() } label: { Image(systemName: "arrow.uturn.forward") }
+            Button { controller.redo() } label: { DVImage("editor.redo") }
                 .disabled(!controller.canRedo)
                 .accessibilityLabel("やり直し")
-            Button { controller.manualSave() } label: { Image(systemName: "square.and.arrow.down") }
+            Button { controller.manualSave() } label: { DVImage("editor.save") }
                 .accessibilityLabel("保存")
             Button(action: onExport) {
-                Text("書き出し")
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 7)
-                    .background(Theme.accent, in: Capsule())
-                    .foregroundStyle(Color.black)
+                HStack(spacing: 6) {
+                    DVImage("editor.export")
+                    Text("書き出し")
+                }
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(LinearGradient(colors: [Theme.accent, Theme.accent.opacity(0.78)], startPoint: .top, endPoint: .bottom),
+                            in: Capsule())
+                .foregroundStyle(Color.black)
+                .shadow(color: Theme.accent.opacity(0.45), radius: 6)
             }
+            .buttonStyle(PressScaleStyle())
             .accessibilityLabel("書き出し")
         }
         .buttonStyle(.plain)
@@ -154,7 +160,7 @@ struct InspectorContainer: View {
                 Button {
                     controller.panel = nil
                 } label: {
-                    Image(systemName: "xmark.circle.fill")
+                    DVImage("status.close")
                         .foregroundStyle(Theme.subtext)
                 }
                 .buttonStyle(.plain)

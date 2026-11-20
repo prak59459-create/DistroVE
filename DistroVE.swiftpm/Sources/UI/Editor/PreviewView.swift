@@ -186,18 +186,18 @@ struct TransportBar: View {
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(Theme.subtext)
             Spacer()
-            Button { controller.step(-1) } label: { Image(systemName: "backward.frame") }
+            Button { controller.step(-1) } label: { DVImage("playback.previousFrame") }
                 .accessibilityLabel("1 コマ戻る")
             Button { controller.togglePlay() } label: {
-                Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill")
+                DVImage(controller.isPlaying ? "playback.pause" : "playback.play")
                     .font(.title2)
             }
             .accessibilityLabel(controller.isPlaying ? "停止" : "再生")
-            Button { controller.step(1) } label: { Image(systemName: "forward.frame") }
+            Button { controller.step(1) } label: { DVImage("playback.nextFrame") }
                 .accessibilityLabel("1 コマ進む")
             Spacer()
             Button { controller.loop.toggle() } label: {
-                Image(systemName: "repeat")
+                DVImage("playback.loop")
                     .foregroundStyle(controller.loop ? Theme.accent : Theme.text)
             }
             .accessibilityLabel("ループ再生")
@@ -219,7 +219,7 @@ struct TransportBar: View {
                 Button("範囲を解除", role: .destructive) { controller.clearRange() }
             }
         } label: {
-            Image(systemName: controller.project.playRange == nil ? "arrow.left.and.right" : "arrow.left.and.right.square.fill")
+            DVImage(controller.project.playRange == nil ? "playback.range" : "playback.rangeOn")
                 .foregroundStyle(controller.project.playRange == nil ? Theme.text : Theme.accent)
         }
         .accessibilityLabel("範囲指定")
@@ -235,7 +235,7 @@ struct TransportBar: View {
             Toggle("プロキシで再生（軽い）", isOn: $controller.useProxies)
         } label: {
             HStack(spacing: 3) {
-                Image(systemName: controller.reducedForThermal ? "thermometer.high" : "dial.medium")
+                DVImage(controller.reducedForThermal ? "playback.thermal" : "playback.quality")
                 Text(controller.quality.label).font(.caption)
             }
         }

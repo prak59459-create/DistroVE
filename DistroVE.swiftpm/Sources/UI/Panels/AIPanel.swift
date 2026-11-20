@@ -13,49 +13,49 @@ struct AIPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            tool("自動字幕", "captions.bubble", "話している言葉を文字にして字幕トラックを作ります（日本語）。") {
+            tool("自動字幕", "ai.captions", "話している言葉を文字にして字幕トラックを作ります（日本語）。") {
                 Button("字幕を作る") { startCaptions() }
             }
-            tool("背景除去", "person.crop.rectangle", "選んだクリップの人物だけを残します。") {
+            tool("背景除去", "ai.removeBackground", "選んだクリップの人物だけを残します。") {
                 Button(controller.selectedClip?.removeBackground == true ? "解除" : "背景を消す") {
                     guard let clip = controller.selectedClip else { controller.showToast("クリップを選んでください"); return }
                     let on: Bool = !clip.removeBackground
                     controller.updateSelected("背景除去") { $0.removeBackground = on }
                 }
             }
-            tool("無音カット", "scissors.badge.ellipsis", "声や音の無いところを自動で切って詰めます。") {
+            tool("無音カット", "ai.silenceCut", "声や音の無いところを自動で切って詰めます。") {
                 VStack(alignment: .leading) {
                     ParamRow(label: "無音の基準", range: -60 ... -20, value: silenceDB, format: "%.0f dB", onChange: { silenceDB = $0 })
                     ParamRow(label: "最短の長さ", range: 0.2...3, value: minSilence, format: "%.1f秒", onChange: { minSilence = $0 })
                     Button("無音を切る") { controller.cutSilence(thresholdDB: silenceDB, minSilence: minSilence) }
                 }
             }
-            tool("BGM に合わせて自動編集", "metronome", "BGM のビートで、メイントラックの素材を切り替えます。") {
+            tool("BGM に合わせて自動編集", "ai.beatEdit", "BGM のビートで、メイントラックの素材を切り替えます。") {
                 VStack(alignment: .leading) {
                     Stepper("\(beatsPerCut) 拍ごとに切り替え", value: $beatsPerCut, in: 1...16)
                         .font(.footnote)
                     Button("自動編集する") { controller.autoEditToBeats(beatsPerCut: beatsPerCut) }
                 }
             }
-            tool("ハイライト抽出", "star", "盛り上がっているところだけを集めます（音と映像の動きで判断）。") {
+            tool("ハイライト抽出", "ai.highlights", "盛り上がっているところだけを集めます（音と映像の動きで判断）。") {
                 VStack(alignment: .leading) {
                     ParamRow(label: "長さ", range: 10...180, value: highlightSeconds, format: "%.0f秒", onChange: { highlightSeconds = $0 })
                     Button("ハイライトを作る") { controller.makeHighlights(targetSeconds: highlightSeconds) }
                 }
             }
-            tool("ショート動画に変換", "rectangle.portrait", "9:16 にして、被写体が中央に来るように寄せ、長さを切りつめます。") {
+            tool("ショート動画に変換", "ai.shorts", "9:16 にして、被写体が中央に来るように寄せ、長さを切りつめます。") {
                 VStack(alignment: .leading) {
                     ParamRow(label: "最大の長さ", range: 15...180, value: shortSeconds, format: "%.0f秒", onChange: { shortSeconds = $0 })
                     Button("ショートにする") { controller.convertToShort(maxSeconds: shortSeconds) }
                 }
             }
-            tool("手ぶれ補正", "camera.metering.center.weighted", "選んだ動画の揺れを解析して打ち消します。") {
+            tool("手ぶれ補正", "ai.stabilize", "選んだ動画の揺れを解析して打ち消します。") {
                 Button(controller.selectedClip?.stabilization == nil ? "補正する" : "解除") { controller.toggleStabilization() }
             }
-            tool("ビート検出", "waveform.path", "選んだ音声（または BGM）からビートマーカーを作ります。") {
+            tool("ビート検出", "ai.beatDetect", "選んだ音声（または BGM）からビートマーカーを作ります。") {
                 Button("ビートを探す") { controller.detectBeats(clipID: controller.selectedClip?.id) }
             }
-            tool("音量の自動そろえ", "speaker.wave.3", "すべてのクリップの音量を -14 LUFS 前後にそろえます。") {
+            tool("音量の自動そろえ", "ai.loudness", "すべてのクリップの音量を -14 LUFS 前後にそろえます。") {
                 Button("そろえる") { controller.normalizeLoudness(all: true) }
             }
         }
@@ -80,7 +80,7 @@ struct AIPanel: View {
 
     private func tool<Content: View>(_ title: String, _ symbol: String, _ detail: String, @ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label(title, systemImage: symbol)
+            DVLabel(title, icon: symbol)
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(Theme.text)
             Text(detail)

@@ -63,7 +63,7 @@ struct HomeView: View {
                 projectList
                     .padding(20)
             }
-            .background(Theme.background.ignoresSafeArea())
+            .background(BrandBackdrop())
             .navigationTitle("Distro VE")
             .toolbar { toolbarItems }
         }
@@ -72,19 +72,28 @@ struct HomeView: View {
 
     private var projectList: some View {
         VStack(alignment: .leading, spacing: 18) {
+            BrandLogo()
             if let id = interrupted, let summary = projects.first(where: { $0.id == id }) {
                 recoveryBanner(summary)
             }
             HStack(spacing: 12) {
-                bigButton("新規プロジェクト", "plus", primary: true) { showNew = true }
-                bigButton("テンプレート", "square.grid.2x2") { showTemplates = true }
-                bigButton(".disve を開く", "folder") { showImport = true }
+                bigButton("新規プロジェクト", "home.new", primary: true) { showNew = true }
+                bigButton("テンプレート", "home.templates") { showTemplates = true }
+                bigButton(".disve を開く", "home.open") { showImport = true }
             }
             Text("プロジェクト").font(.title3.weight(.bold)).foregroundStyle(Theme.text)
             if projects.isEmpty {
-                Text("まだプロジェクトがありません。「新規プロジェクト」か「テンプレート」から始めましょう。")
-                    .font(.footnote)
-                    .foregroundStyle(Theme.subtext)
+                VStack(spacing: 12) {
+                    DVImage("illustration.empty")
+                        .font(.system(size: 72, weight: .light))
+                        .foregroundStyle(Theme.accent)
+                    Text("まだプロジェクトがありません。「新規プロジェクト」か「テンプレート」から始めましょう。")
+                        .font(.footnote)
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(Theme.subtext)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 24)
             }
             LazyVGrid(columns: columns, spacing: 16) {
                 ForEach(projects) { summary in
@@ -99,9 +108,9 @@ struct HomeView: View {
     @ToolbarContentBuilder
     private var toolbarItems: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
-            Button { showHelp = true } label: { Image(systemName: "questionmark.circle") }
+            Button { showHelp = true } label: { DVImage("home.help") }
                 .accessibilityLabel("ヘルプ")
-            Button { showSettings = true } label: { Image(systemName: "gearshape") }
+            Button { showSettings = true } label: { DVImage("home.settings") }
                 .accessibilityLabel("設定")
         }
     }
@@ -201,28 +210,28 @@ struct HomeView: View {
 
     @ViewBuilder
     private func menu(_ summary: ProjectStore.Summary) -> some View {
-        Button { open(summary.id) } label: { Label("開く", systemImage: "square.and.pencil") }
+        Button { open(summary.id) } label: { DVMenuLabel("開く", icon: "project.open") }
         Button {
             renameText = summary.name
             renameTarget = summary
-        } label: { Label("名前の変更", systemImage: "pencil") }
+        } label: { DVMenuLabel("名前の変更", icon: "project.rename") }
         Button {
             _ = try? ProjectStore.shared.duplicate(summary.id)
             reload()
-        } label: { Label("複製", systemImage: "plus.square.on.square") }
+        } label: { DVMenuLabel("複製", icon: "project.duplicate") }
         ShareLink(item: ProjectStore.shared.fileURL(summary.id)) {
-            Label(".disve を共有", systemImage: "square.and.arrow.up")
+            DVMenuLabel(".disve を共有", icon: "project.share")
         }
-        Button { backupTarget = summary } label: { Label("バックアップから戻す", systemImage: "clock.arrow.circlepath") }
+        Button { backupTarget = summary } label: { DVMenuLabel("バックアップから戻す", icon: "project.restore") }
         Button(role: .destructive) {
             ProjectStore.shared.delete(summary.id)
             reload()
-        } label: { Label("削除", systemImage: "trash") }
+        } label: { DVMenuLabel("削除", icon: "project.delete") }
     }
 
     private func recoveryBanner(_ summary: ProjectStore.Summary) -> some View {
         HStack {
-            Image(systemName: "exclamationmark.arrow.circlepath")
+            DVImage("project.recovered")
             VStack(alignment: .leading) {
                 Text("前回は編集中に終了しました").font(.footnote.weight(.semibold))
                 Text("「\(summary.name)」は自動保存されています。続きから編集できます。").font(.caption)
@@ -242,7 +251,7 @@ struct HomeView: View {
     private func bigButton(_ title: String, _ symbol: String, primary: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 8) {
-                Image(systemName: symbol).font(.title2)
+                DVImage(symbol).font(.title2)
                 Text(title).font(.footnote.weight(.semibold))
             }
             .frame(maxWidth: .infinity, minHeight: 84)
@@ -265,7 +274,7 @@ struct ProjectCard: View {
                         .resizable()
                         .scaledToFit()
                 } else {
-                    Image(systemName: "film").font(.largeTitle).foregroundStyle(Theme.subtext)
+                    DVImage("project.placeholder").font(.largeTitle).foregroundStyle(Theme.subtext)
                 }
             }
             .frame(height: 130)
@@ -374,7 +383,7 @@ struct TemplateGallery: View {
                 ProgressView(status)
             } else if let template = selected {
                 PhotosPicker(selection: $items, maxSelectionCount: 30, matching: .any(of: [.videos, .images])) {
-                    Label("素材を選んで作る（おすすめ \(template.slots) 個）", systemImage: "photo.on.rectangle")
+                    DVLabel("素材を選んで作る（おすすめ \(template.slots) 個）", icon: "media.photos")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
@@ -423,7 +432,7 @@ struct TemplateRow: View {
     var body: some View {
         Button(action: onSelect) {
             HStack(alignment: .top, spacing: 12) {
-                Image(systemName: template.aspect == .portrait9x16 ? "rectangle.portrait" : "rectangle")
+                DVImage(template.aspect == .portrait9x16 ? "template.portrait" : "template.landscape")
                     .font(.title2)
                     .frame(width: 34)
                 VStack(alignment: .leading, spacing: 3) {
@@ -433,7 +442,7 @@ struct TemplateRow: View {
                 }
                 Spacer()
                 if isSelected {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent)
+                    DVImage("template.selected").foregroundStyle(Theme.accent)
                 }
             }
         }

@@ -112,7 +112,7 @@ struct ExportView: View {
         Section {
             summary
             if let warning = storageWarning {
-                Label(warning, systemImage: "exclamationmark.triangle")
+                DVLabel(warning, icon: "status.warning")
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
@@ -143,7 +143,7 @@ struct ExportView: View {
                 Button {
                     start()
                 } label: {
-                    Label("書き出す", systemImage: "square.and.arrow.up.on.square")
+                    DVLabel("書き出す", icon: "export.start")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
@@ -156,15 +156,20 @@ struct ExportView: View {
 
     @ViewBuilder
     private func finishedActions(_ url: URL) -> some View {
-        Label("書き出しました", systemImage: "checkmark.circle.fill")
-            .foregroundStyle(.green)
+        HStack(spacing: 12) {
+            DVImage("illustration.exported")
+                .font(.system(size: 40, weight: .light))
+                .foregroundStyle(Theme.accent)
+            DVLabel("書き出しました", icon: "status.done")
+                .foregroundStyle(.green)
+        }
         Button {
             model.saveToPhotos(url, isGIF: settings.format == .gif)
         } label: {
-            Label("写真ライブラリに保存", systemImage: "photo.badge.plus")
+            DVLabel("写真ライブラリに保存", icon: "export.photos")
         }
         ShareLink(item: url) {
-            Label("ファイルに保存・共有", systemImage: "square.and.arrow.up")
+            DVLabel("ファイルに保存・共有", icon: "export.share")
         }
     }
 
@@ -173,14 +178,20 @@ struct ExportView: View {
             presetID = preset.id
             settings = controller.limits.clamp(preset.settings)
         } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(preset.name).font(.footnote.weight(.semibold))
-                Text(preset.detail).font(.caption2).foregroundStyle(Theme.subtext)
+            HStack(spacing: 8) {
+                DVImage("export." + preset.id)
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(presetID == preset.id ? Theme.accent : Theme.text)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(preset.name).font(.footnote.weight(.semibold))
+                    Text(preset.detail).font(.caption2).foregroundStyle(Theme.subtext)
+                }
             }
             .padding(10)
             .background(presetID == preset.id ? Theme.accent.opacity(0.25) : Theme.raised, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(presetID == preset.id ? Theme.accent : Color.clear, lineWidth: 1))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressScaleStyle())
     }
 
     private var bitrateRow: some View {

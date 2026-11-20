@@ -72,6 +72,11 @@ struct SettingsView: View {
             }
             Text(DevicePerformance.current.detail).font(.caption).foregroundStyle(Theme.subtext)
             NavigationLink("ツールバーの道具の並び・表示") { ToolbarEditor() }
+            NavigationLink {
+                IconSettingsView()
+            } label: {
+                DVLabel("アイコン（ChatGPT で作って差し替える）", icon: "tool.ai")
+            }
         }
     }
 
@@ -237,7 +242,7 @@ struct DiagnosticsView: View {
                 }
                 ForEach(files, id: \.self) { url in
                     ShareLink(item: url) {
-                        Label(url.lastPathComponent, systemImage: url.lastPathComponent.hasPrefix("crash") ? "exclamationmark.triangle" : "doc.text")
+                        DVLabel(url.lastPathComponent, icon: url.lastPathComponent.hasPrefix("crash") ? "status.warning" : "status.log")
                     }
                 }
                 Text("ログは端末の外へ自動では送りません。不具合を知らせるときに、ここから共有できます。")
@@ -294,7 +299,7 @@ struct ToolbarEditor: View {
         List {
             Section {
                 ForEach(RootTool.ordered(settings.rootToolOrder)) { tool in
-                    Toggle(isOn: binding(for: tool)) { Label(tool.title, systemImage: tool.symbol) }
+                    Toggle(isOn: binding(for: tool)) { DVLabel(tool.title, icon: tool.iconID) }
                 }
                 .onMove { from, to in move(from, to) }
             } footer: {
@@ -330,12 +335,12 @@ struct TutorialView: View {
     @State private var page: Int = 0
 
     private let pages: [(String, String, String)] = [
-        ("film.stack", "Distro VE へようこそ", "無料・端末内処理の動画編集アプリです。編集はオフラインで完結し、動画を外に送りません。"),
-        ("plus.rectangle.on.rectangle", "素材を追加", "「新規プロジェクト」を作り、下の「素材」から写真ライブラリやファイルの動画・画像を入れます。ドラッグ＆ドロップもできます。"),
-        ("hand.draw", "タイムラインの操作", "指 1 本で左右にスクロール、ピンチで拡大縮小、2 本指でゆっくり精密に動かせます。クリップは長押しで移動、選んで端をつまむと長さを変えられます。"),
-        ("diamond", "キーフレームとエフェクト", "パラメーターの ◆ を押すと、その時刻の値を記録します。色・位置・大きさ・音量などすべて動かせます。"),
-        ("wand.and.stars", "AI と自動編集", "自動字幕・無音カット・BGM に合わせた自動編集・ショート変換・背景除去が端末内で使えます。"),
-        ("square.and.arrow.up", "書き出し", "YouTube・TikTok・Instagram のプリセットで、透かしなしの MP4 や GIF を保存できます。")
+        ("onboarding.welcome", "Distro VE へようこそ", "無料・端末内処理の動画編集アプリです。編集はオフラインで完結し、動画を外に送りません。"),
+        ("onboarding.media", "素材を追加", "「新規プロジェクト」を作り、下の「素材」から写真ライブラリやファイルの動画・画像を入れます。ドラッグ＆ドロップもできます。"),
+        ("onboarding.timeline", "タイムラインの操作", "指 1 本で左右にスクロール、ピンチで拡大縮小、2 本指でゆっくり精密に動かせます。クリップは長押しで移動、選んで端をつまむと長さを変えられます。"),
+        ("onboarding.keyframes", "キーフレームとエフェクト", "パラメーターの ◆ を押すと、その時刻の値を記録します。色・位置・大きさ・音量などすべて動かせます。"),
+        ("onboarding.ai", "AI と自動編集", "自動字幕・無音カット・BGM に合わせた自動編集・ショート変換・背景除去が端末内で使えます。"),
+        ("onboarding.export", "書き出し", "YouTube・TikTok・Instagram のプリセットで、透かしなしの MP4 や GIF を保存できます。")
     ]
 
     /// 編集の経験（Q15）。初心者からプロまで、出す道具の数を変える。
@@ -359,7 +364,7 @@ struct TutorialView: View {
             TabView(selection: $page) {
                 ForEach(pages.indices, id: \.self) { i in
                     VStack(spacing: 18) {
-                        Image(systemName: pages[i].0)
+                        DVImage(pages[i].0)
                             .font(.system(size: 64))
                             .foregroundStyle(Theme.accent)
                         Text(pages[i].1).font(.title.weight(.bold))

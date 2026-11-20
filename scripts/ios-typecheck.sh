@@ -53,5 +53,7 @@ grep -E "error:" "$LOG" | head -150
 echo "--- 型チェックに時間のかかった関数（150ms 超） ---"
 grep -E "took [0-9]+ms to type-check" "$LOG" | sed 's/^.*Sources\///' | sort -u | head -40
 echo "--- 警告の数: $(grep -c 'warning:' "$LOG") ---"
+# どんな警告か（同じものは 1 回だけ）
+grep -E "warning:" "$LOG" | sed 's/^.*Sources\///' | sort -u | head -20
 echo "型チェック（1 プロセス）: $((end - start)) 秒"
 exit $status

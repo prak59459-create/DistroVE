@@ -54,7 +54,7 @@ struct TextEditorPanel: View {
                         Button(family) { change("フォント") { $0.fontName = family } }
                     }
                 } label: {
-                    Label(text.fontName.isEmpty ? "システム" : text.fontName, systemImage: "textformat")
+                    DVLabel(text.fontName.isEmpty ? "システム" : text.fontName, icon: "text.font")
                         .lineLimit(1)
                 }
                 Toggle("太字", isOn: Binding<Bool>(get: { text.bold }, set: { v in change("太字") { $0.bold = v } }))
@@ -79,7 +79,7 @@ struct TextEditorPanel: View {
             colorRow("背景の帯", text.backgroundColor) { $0.backgroundColor = $1 }
             ParamRow(label: "折り返し幅", range: 0.2...1, value: text.maxWidth, onChange: { v in change("折り返し幅", key: "wrap") { $0.maxWidth = v } })
             PanelTitle(text: "動き")
-            ChipPicker(items: TextAnimation.allCases, selection: text.animation, label: { $0.label }) { a in
+            ChipPicker(items: TextAnimation.allCases, selection: text.animation, label: { $0.label }, icon: { $0.iconID }) { a in
                 change("テキストの動き") { $0.animation = a }
             }
         }
@@ -122,7 +122,7 @@ struct SpeakerDetectionRow: View {
                 }
                 .pickerStyle(.menu)
                 Button { controller.detectSpeakers(speakers == 0 ? nil : speakers) } label: {
-                    Label("話者を自動で判別", systemImage: "person.2.wave.2")
+                    DVLabel("話者を自動で判別", icon: "ai.speakers")
                 }
                 .buttonStyle(.bordered)
             }
@@ -143,11 +143,11 @@ struct SubtitlesPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Button { controller.addCueAtPlayhead() } label: { Label("ここに字幕を追加", systemImage: "plus") }
-                Button { controller.panel = .ai } label: { Label("自動字幕", systemImage: "waveform.badge.mic") }
-                Button { showImporter = true } label: { Label("SRT 読み込み", systemImage: "square.and.arrow.down") }
+                Button { controller.addCueAtPlayhead() } label: { DVLabel("ここに字幕を追加", icon: "text.addCue") }
+                Button { controller.panel = .ai } label: { DVLabel("自動字幕", icon: "ai.transcribe") }
+                Button { showImporter = true } label: { DVLabel("SRT 読み込み", icon: "text.importSRT") }
                 if let url = controller.exportSRT(translation: false) {
-                    ShareLink(item: url) { Label("SRT 書き出し", systemImage: "square.and.arrow.up") }
+                    ShareLink(item: url) { DVLabel("SRT 書き出し", icon: "text.exportSRT") }
                 }
             }
             .buttonStyle(.bordered)
@@ -263,7 +263,7 @@ struct SubtitleStyleEditor: View {
                     Button(family) { controller.updateSubtitleStyle { $0.fontName = family } }
                 }
             } label: {
-                Label(style.fontName.isEmpty ? "フォント：システム" : "フォント：" + style.fontName, systemImage: "textformat")
+                DVLabel(style.fontName.isEmpty ? "フォント：システム" : "フォント：" + style.fontName, icon: "text.font")
                     .font(.footnote)
             }
             ParamRow(label: "大きさ", range: 0.02...0.12, value: style.size, onChange: { v in controller.updateSubtitleStyle { $0.size = v } })
@@ -273,7 +273,7 @@ struct SubtitleStyleEditor: View {
                 .font(.footnote)
             ColorPicker("背景の帯", selection: Binding<Color>(get: { style.bandColor.color }, set: { c in controller.updateSubtitleStyle { $0.bandColor = RGBA(c) } }))
                 .font(.footnote)
-            ChipPicker(items: TextAnimation.allCases, selection: style.animation, label: { $0.label }) { a in
+            ChipPicker(items: TextAnimation.allCases, selection: style.animation, label: { $0.label }, icon: { $0.iconID }) { a in
                 controller.updateSubtitleStyle { $0.animation = a }
             }
             ParamRow(label: "ずれ補正", range: -3...3, value: track.subtitleOffset.seconds, format: "%+.2f秒", onChange: { v in
@@ -330,7 +330,7 @@ struct SubtitleTranslator: View {
                 }
                 .buttonStyle(.borderedProminent)
                 if let url = controller.exportSRT(translation: true) {
-                    ShareLink(item: url) { Label("翻訳 SRT", systemImage: "square.and.arrow.up") }
+                    ShareLink(item: url) { DVLabel("翻訳 SRT", icon: "text.translate") }
                         .buttonStyle(.bordered)
                 }
             }

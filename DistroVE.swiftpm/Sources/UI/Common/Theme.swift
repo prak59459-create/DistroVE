@@ -115,7 +115,7 @@ struct ToolButton: View {
     var body: some View {
         Button(action: action) {
             VStack(spacing: 4) {
-                Image(systemName: symbol)
+                DVImage(symbol)
                     .font(.system(size: 19, weight: .medium))
                     .frame(height: 22)
                 Text(title)
@@ -169,7 +169,7 @@ struct ParamRow: View {
                 .frame(width: 50, alignment: .trailing)
             if let toggle = onToggleKey {
                 Button(action: toggle) {
-                    Image(systemName: keyIcon)
+                    DVImage(keyIcon)
                         .foregroundStyle(keyState == .none ? Theme.subtext : Theme.accent)
                 }
                 .buttonStyle(.plain)
@@ -177,7 +177,7 @@ struct ParamRow: View {
             }
             if let reset = onReset {
                 Button(action: reset) {
-                    Image(systemName: "arrow.uturn.backward")
+                    DVImage("param.reset")
                         .font(.caption)
                         .foregroundStyle(Theme.subtext)
                 }
@@ -190,9 +190,9 @@ struct ParamRow: View {
 
     private var keyIcon: String {
         switch keyState {
-        case .none: return "diamond"
-        case .animated: return "diamond.bottomhalf.filled"
-        case .onKey: return "diamond.fill"
+        case .none: return "param.key"
+        case .animated: return "param.key.animated"
+        case .onKey: return "param.key.on"
         }
     }
 
@@ -206,7 +206,18 @@ struct ChipPicker<Item: Hashable>: View {
     let items: [Item]
     let selection: Item?
     let label: (Item) -> String
+    /// 文字の前に出すアイコン（IconCatalog の id）
+    let icon: ((Item) -> String)?
     let onSelect: (Item) -> Void
+
+    init(items: [Item], selection: Item?, label: @escaping (Item) -> String, icon: ((Item) -> String)? = nil,
+         onSelect: @escaping (Item) -> Void) {
+        self.items = items
+        self.selection = selection
+        self.label = label
+        self.icon = icon
+        self.onSelect = onSelect
+    }
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -224,7 +235,12 @@ struct ChipPicker<Item: Hashable>: View {
         return Button {
             onSelect(item)
         } label: {
-            Text(label(item))
+            HStack(spacing: 5) {
+                if let name = icon?(item) {
+                    DVImage(name).font(.caption)
+                }
+                Text(label(item))
+            }
                 .font(.footnote)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 7)

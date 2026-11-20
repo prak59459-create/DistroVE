@@ -130,12 +130,13 @@ struct SpeedMap {
     }
 
     /// よく使う速度カーブ（CapCut などにある定番の形）。
-    static let presets: [(name: String, points: [SpeedPoint])] = [
-        ("モンタージュ", [SpeedPoint(0, 1), SpeedPoint(0.35, 3), SpeedPoint(0.5, 0.4), SpeedPoint(0.65, 3), SpeedPoint(1, 1)]),
-        ("ヒーロー", [SpeedPoint(0, 2.5), SpeedPoint(0.4, 2.5), SpeedPoint(0.5, 0.3), SpeedPoint(0.6, 2.5), SpeedPoint(1, 2.5)]),
-        ("弾丸", [SpeedPoint(0, 3), SpeedPoint(0.45, 0.25), SpeedPoint(0.55, 0.25), SpeedPoint(1, 3)]),
-        ("ジャンプカット", [SpeedPoint(0, 0.5), SpeedPoint(0.3, 5), SpeedPoint(0.7, 5), SpeedPoint(1, 0.5)]),
-        ("フラッシュイン", [SpeedPoint(0, 5), SpeedPoint(0.3, 1), SpeedPoint(1, 1)]),
-        ("フラッシュアウト", [SpeedPoint(0, 1), SpeedPoint(0.7, 1), SpeedPoint(1, 5)])
+    /// id はアイコン（speed.<id>）に使う。
+    static let presets: [(id: String, name: String, points: [SpeedPoint])] = [
+        ("montage", "モンタージュ", [SpeedPoint(0, 1), SpeedPoint(0.35, 3), SpeedPoint(0.5, 0.4), SpeedPoint(0.65, 3), SpeedPoint(1, 1)]),
+        ("hero", "ヒーロー", [SpeedPoint(0, 2.5), SpeedPoint(0.4, 2.5), SpeedPoint(0.5, 0.3), SpeedPoint(0.6, 2.5), SpeedPoint(1, 2.5)]),
+        ("bullet", "弾丸", [SpeedPoint(0, 3), SpeedPoint(0.45, 0.25), SpeedPoint(0.55, 0.25), SpeedPoint(1, 3)]),
+        ("jumpCut", "ジャンプカット", [SpeedPoint(0, 0.5), SpeedPoint(0.3, 5), SpeedPoint(0.7, 5), SpeedPoint(1, 0.5)]),
+        ("flashIn", "フラッシュイン", [SpeedPoint(0, 5), SpeedPoint(0.3, 1), SpeedPoint(1, 1)]),
+        ("flashOut", "フラッシュアウト", [SpeedPoint(0, 1), SpeedPoint(0.7, 1), SpeedPoint(1, 5)])
     ]
 }

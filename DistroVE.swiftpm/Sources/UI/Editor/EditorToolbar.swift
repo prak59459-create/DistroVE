@@ -54,7 +54,7 @@ struct EditorToolbar: View {
     private func rootTool(_ item: RootTool) -> some View {
         let panel: EditorPanel? = EditorToolbar.panel(for: item)
         let action: (() -> Void)? = panel == nil ? { self.rootAction(item) } : nil
-        return tool(item.title, item.symbol, panel: panel, action: action)
+        return tool(item.title, item.iconID, panel: panel, action: action)
     }
 
     static func panel(for item: RootTool) -> EditorPanel? {
@@ -87,17 +87,17 @@ struct EditorToolbar: View {
     @ViewBuilder
     private func clipTools(_ clip: Clip) -> some View {
         if pro {
-            tool("キーフレーム", "diamond", panel: .keyframes)
+            tool("キーフレーム", "edit.keyframe", panel: .keyframes)
         }
-        tool("分割", "scissors", action: { controller.splitAtPlayhead() })
-        tool("削除", "trash", action: { controller.deleteSelection(ripple: false) })
+        tool("分割", "edit.split", action: { controller.splitAtPlayhead() })
+        tool("削除", "edit.delete", action: { controller.deleteSelection(ripple: false) })
         if advanced {
-            tool("リップル削除", "arrow.left.to.line", action: { controller.deleteSelection(ripple: true) })
+            tool("リップル削除", "edit.rippleDelete", action: { controller.deleteSelection(ripple: true) })
         }
-        tool("複製", "plus.square.on.square", action: { controller.duplicateSelection() })
+        tool("複製", "edit.duplicate", action: { controller.duplicateSelection() })
         kindTools(clip)
         if advanced && !pro {
-            tool("キーフレーム", "diamond", panel: .keyframes)
+            tool("キーフレーム", "edit.keyframe", panel: .keyframes)
         }
     }
 
@@ -106,61 +106,61 @@ struct EditorToolbar: View {
         switch clip.kind {
         case .video:
             visualTools(clip)
-            tool("速度", "speedometer", panel: .speed)
-            tool("音量", "speaker.wave.2", panel: .volume)
-            if advanced { tool("音声加工", "waveform", panel: .audioFX) }
-            tool(clip.speed.reversed ? "逆再生 解除" : "逆再生", "backward", action: { controller.toggleReverse() })
-            tool("静止", "pause.rectangle", action: { controller.freezeFrame() })
-            tool("トランジション", "rectangle.2.swap", panel: .transition, enabled: isOnMain(clip))
+            tool("速度", "edit.speed", panel: .speed)
+            tool("音量", "edit.volume", panel: .volume)
+            if advanced { tool("音声加工", "edit.audioFX", panel: .audioFX) }
+            tool(clip.speed.reversed ? "逆再生 解除" : "逆再生", "edit.reverse", action: { controller.toggleReverse() })
+            tool("静止", "edit.freeze", action: { controller.freezeFrame() })
+            tool("トランジション", "edit.transition", panel: .transition, enabled: isOnMain(clip))
         case .image, .gif, .solid:
             visualTools(clip)
-            tool("トランジション", "rectangle.2.swap", panel: .transition, enabled: isOnMain(clip))
+            tool("トランジション", "edit.transition", panel: .transition, enabled: isOnMain(clip))
         case .text, .sticker:
-            tool("編集", "character.cursor.ibeam", panel: .text)
-            tool("変形", "arrow.up.left.and.arrow.down.right", panel: .transform)
-            tool("アニメ", "sparkles", panel: .animation)
+            tool("編集", "edit.text", panel: .text)
+            tool("変形", "edit.transform", panel: .transform)
+            tool("アニメ", "edit.animation", panel: .animation)
             if advanced {
-                tool("エフェクト", "wand.and.rays", panel: .effects)
-                tool("ブレンド", "square.stack.3d.down.right", panel: .blend)
+                tool("エフェクト", "edit.effects", panel: .effects)
+                tool("ブレンド", "edit.blend", panel: .blend)
             }
         case .shape:
-            tool("変形", "arrow.up.left.and.arrow.down.right", panel: .transform)
-            tool("アニメ", "sparkles", panel: .animation)
-            if advanced { tool("ブレンド", "square.stack.3d.down.right", panel: .blend) }
+            tool("変形", "edit.transform", panel: .transform)
+            tool("アニメ", "edit.animation", panel: .animation)
+            if advanced { tool("ブレンド", "edit.blend", panel: .blend) }
         case .object3D:
-            tool("3D", "cube", panel: .object3D)
-            tool("変形", "arrow.up.left.and.arrow.down.right", panel: .transform)
-            tool("アニメ", "sparkles", panel: .animation)
+            tool("3D", "edit.object3D", panel: .object3D)
+            tool("変形", "edit.transform", panel: .transform)
+            tool("アニメ", "edit.animation", panel: .animation)
             if advanced {
-                tool("エフェクト", "wand.and.rays", panel: .effects)
-                tool("ブレンド", "square.stack.3d.down.right", panel: .blend)
+                tool("エフェクト", "edit.effects", panel: .effects)
+                tool("ブレンド", "edit.blend", panel: .blend)
             }
         case .audio:
-            tool("音量", "speaker.wave.2", panel: .volume)
-            tool("速度", "speedometer", panel: .speed)
+            tool("音量", "edit.volume", panel: .volume)
+            tool("速度", "edit.speed", panel: .speed)
             if advanced {
-                tool("音声加工", "waveform", panel: .audioFX)
-                tool("ビート検出", "metronome", action: { controller.detectBeats(clipID: clip.id) })
+                tool("音声加工", "edit.audioFX", panel: .audioFX)
+                tool("ビート検出", "edit.beats", action: { controller.detectBeats(clipID: clip.id) })
             }
         case .adjustment:
-            tool("調整", "slider.horizontal.3", panel: .adjust)
-            tool("フィルター", "camera.filters", panel: .filters)
-            tool("エフェクト", "wand.and.rays", panel: .effects)
-            tool("範囲", "circle.dashed", panel: .mask)
+            tool("調整", "edit.adjust", panel: .adjust)
+            tool("フィルター", "edit.filters", panel: .filters)
+            tool("エフェクト", "edit.effects", panel: .effects)
+            tool("範囲", "edit.mask", panel: .mask)
         }
     }
 
     @ViewBuilder
     private func visualTools(_ clip: Clip) -> some View {
-        tool("変形", "arrow.up.left.and.arrow.down.right", panel: .transform)
-        if advanced { tool("調整", "slider.horizontal.3", panel: .adjust) }
-        tool("フィルター", "camera.filters", panel: .filters)
-        tool("エフェクト", "wand.and.rays", panel: .effects)
-        tool("アニメ", "sparkles", panel: .animation)
+        tool("変形", "edit.transform", panel: .transform)
+        if advanced { tool("調整", "edit.adjust", panel: .adjust) }
+        tool("フィルター", "edit.filters", panel: .filters)
+        tool("エフェクト", "edit.effects", panel: .effects)
+        tool("アニメ", "edit.animation", panel: .animation)
         if advanced {
-            tool("マスク", "circle.dashed", panel: .mask)
-            tool("クロマキー", "person.crop.square.filled.and.at.rectangle", panel: .chroma)
-            tool("ブレンド", "square.stack.3d.down.right", panel: .blend)
+            tool("マスク", "edit.mask", panel: .mask)
+            tool("クロマキー", "edit.chromaKey", panel: .chroma)
+            tool("ブレンド", "edit.blend", panel: .blend)
         }
     }
 
@@ -173,16 +173,16 @@ struct EditorToolbar: View {
 
     @ViewBuilder
     private var multiTools: some View {
-        tool("分割", "scissors", action: { controller.splitAtPlayhead() })
-        tool("削除", "trash", action: { controller.deleteSelection(ripple: false) })
-        tool("リップル削除", "arrow.left.to.line", action: { controller.deleteSelection(ripple: true) })
-        tool("選択解除", "xmark", action: { controller.select(nil) })
+        tool("分割", "edit.split", action: { controller.splitAtPlayhead() })
+        tool("削除", "edit.delete", action: { controller.deleteSelection(ripple: false) })
+        tool("リップル削除", "edit.rippleDelete", action: { controller.deleteSelection(ripple: true) })
+        tool("選択解除", "edit.deselect", action: { controller.select(nil) })
     }
 
     @ViewBuilder
     private var cueTools: some View {
-        tool("字幕を編集", "captions.bubble", panel: .subtitles)
-        tool("削除", "trash", action: { controller.deleteSelection(ripple: false) })
-        tool("選択解除", "xmark", action: { controller.selectCue(nil) })
+        tool("字幕を編集", "edit.subtitle", panel: .subtitles)
+        tool("削除", "edit.delete", action: { controller.deleteSelection(ripple: false) })
+        tool("選択解除", "edit.deselect", action: { controller.selectCue(nil) })
     }
 }

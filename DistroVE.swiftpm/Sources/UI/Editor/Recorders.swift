@@ -139,7 +139,7 @@ struct CameraRecorderView: View {
                                 Button(device.localizedName) { model.select(device) }
                             }
                         } label: {
-                            Label(model.current?.localizedName ?? "カメラ", systemImage: "camera.rotate")
+                            DVLabel(model.current?.localizedName ?? "カメラ", icon: "media.cameraSwitch")
                         }
                     }
                 }

@@ -40,14 +40,14 @@ struct MediaPanel: View {
     private var importButtons: some View {
         HStack(spacing: 10) {
             PhotosPicker(selection: $photoItems, maxSelectionCount: 50, matching: .any(of: [.videos, .images])) {
-                Label("写真ライブラリ", systemImage: "photo.on.rectangle")
+                DVLabel("写真ライブラリ", icon: "media.photos")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             Button {
                 showFiles = true
             } label: {
-                Label("ファイル・クラウド", systemImage: "folder")
+                DVLabel("ファイル・クラウド", icon: "media.files")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered)
@@ -56,14 +56,14 @@ struct MediaPanel: View {
 
     private var recordButtons: some View {
         HStack(spacing: 10) {
-            Button { showCamera = true } label: { Label("カメラで撮影", systemImage: "video") }
-            Button { showNarration = true } label: { Label("ナレーション", systemImage: "mic") }
+            Button { showCamera = true } label: { DVLabel("カメラで撮影", icon: "media.camera") }
+            Button { showNarration = true } label: { DVLabel("ナレーション", icon: "media.narration") }
             Button {
                 screen.toggle { url in
                     controller.importFiles([url], copy: true, asOverlay: false, autoProxy: false)
                 }
             } label: {
-                Label(screen.isRecording ? "画面録画を止める" : "画面録画", systemImage: screen.isRecording ? "stop.circle" : "record.circle")
+                DVLabel(screen.isRecording ? "画面録画を止める" : "画面録画", icon: screen.isRecording ? "media.screenRecordStop" : "media.screenRecord")
             }
         }
         .buttonStyle(.bordered)
@@ -134,7 +134,7 @@ struct ProjectMediaList: View {
     var body: some View {
         ForEach(controller.project.media) { asset in
             HStack {
-                Image(systemName: icon(asset.kind))
+                DVImage(asset.kind.iconID)
                     .frame(width: 20)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(asset.name).font(.footnote).lineLimit(1)
@@ -148,22 +148,12 @@ struct ProjectMediaList: View {
                 Button {
                     controller.addAssets([asset], asOverlay: false, autoProxy: false)
                 } label: {
-                    Image(systemName: "plus.circle")
+                    DVImage("media.add")
                 }
                 .accessibilityLabel("タイムラインに追加")
             }
             .buttonStyle(.plain)
             .foregroundStyle(Theme.text)
-        }
-    }
-
-    private func icon(_ kind: MediaKind) -> String {
-        switch kind {
-        case .video: return "film"
-        case .audio: return "music.note"
-        case .image: return "photo"
-        case .gif: return "photo.stack"
-        case .model3D: return "cube"
         }
     }
 
@@ -217,7 +207,7 @@ struct AudioLibraryPanel: View {
             Button {
                 togglePreview(sound.id)
             } label: {
-                Image(systemName: playingID == sound.id ? "stop.circle.fill" : "play.circle")
+                DVImage(playingID == sound.id ? "sound.stop" : "sound.play")
                     .font(.title3)
             }
             .accessibilityLabel("試聴")
@@ -269,16 +259,14 @@ struct StickerPanel: View {
             PanelTitle(text: "矢印・図形")
             HStack(spacing: 8) {
                 ForEach(ShapeKind.allCases, id: \.self) { kind in
-                    Button(kind.label) { controller.addShape(kind) }
-                        .buttonStyle(.bordered)
-                        .font(.caption)
+                    IconChoiceButton(title: kind.label, icon: kind.iconID) { controller.addShape(kind) }
                 }
             }
             PanelTitle(text: "隠す")
             Button {
                 controller.addMosaicBox()
             } label: {
-                Label("モザイク枠を追加", systemImage: "square.grid.3x3")
+                DVLabel("モザイク枠を追加", icon: "media.mosaic")
             }
             .buttonStyle(.bordered)
         }
@@ -292,7 +280,7 @@ struct CanvasPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             PanelTitle(text: "縦横比")
-            ChipPicker(items: AspectPreset.allCases, selection: controller.project.canvas.aspect, label: { $0.label }) { aspect in
+            ChipPicker(items: AspectPreset.allCases, selection: controller.project.canvas.aspect, label: { $0.label }, icon: { $0.iconID }) { aspect in
                 controller.setAspect(aspect)
             }
             Text("\(controller.project.canvas.width) × \(controller.project.canvas.height)")
@@ -341,11 +329,11 @@ struct ReorderPanel: View {
                     Text(clip.duration.shortLabel).font(.caption.monospacedDigit()).foregroundStyle(Theme.subtext)
                     Button {
                         move(clip.id, to: index - 1)
-                    } label: { Image(systemName: "chevron.up") }
+                    } label: { DVImage("reorder.up") }
                         .disabled(index == 0)
                     Button {
                         move(clip.id, to: index + 1)
-                    } label: { Image(systemName: "chevron.down") }
+                    } label: { DVImage("reorder.down") }
                         .disabled(index == clips.count - 1)
                 }
                 .buttonStyle(.borderless)
@@ -372,7 +360,7 @@ struct DrawingPanel: View {
             Button {
                 showCanvas = true
             } label: {
-                Label("描く", systemImage: "pencil.tip.crop.circle")
+                DVLabel("描く", icon: "media.draw")
             }
             .buttonStyle(.borderedProminent)
         }

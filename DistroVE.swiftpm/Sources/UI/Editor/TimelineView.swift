@@ -618,9 +618,15 @@ final class TimelineCanvasView: UIView, UIGestureRecognizerDelegate {
             }
             for (i, button) in headerButtons(track).enumerated() {
                 let r: CGRect = headerButtonRect(row: row, index: i)
-                let config = UIImage.SymbolConfiguration(pointSize: 12, weight: .medium)
-                if let image = UIImage(systemName: button.symbol, withConfiguration: config)?.withTintColor(button.active ? Theme.accentUI : Theme.subtextUI, renderingMode: .alwaysOriginal) {
-                    image.draw(in: r.insetBy(dx: (r.width - image.size.width) / 2, dy: (r.height - image.size.height) / 2))
+                let tint: UIColor = button.active ? Theme.accentUI : Theme.subtextUI
+                if let custom = IconStore.shared.tinted(button.icon, color: tint) {
+                    // 取り込んだアイコン（設定 > アイコン）
+                    custom.draw(in: r.insetBy(dx: 4, dy: 4))
+                } else {
+                    let config = UIImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+                    if let image = UIImage(systemName: IconCatalog.fallback(for: button.icon), withConfiguration: config)?.withTintColor(tint, renderingMode: .alwaysOriginal) {
+                        image.draw(in: r.insetBy(dx: (r.width - image.size.width) / 2, dy: (r.height - image.size.height) / 2))
+                    }
                 }
             }
         }
@@ -635,7 +641,8 @@ final class TimelineCanvasView: UIView, UIGestureRecognizerDelegate {
     }
 
     private struct HeaderButton {
-        let symbol: String
+        /// アイコンの id（IconCatalog）
+        let icon: String
         let active: Bool
         let action: Int
     }
@@ -644,14 +651,14 @@ final class TimelineCanvasView: UIView, UIGestureRecognizerDelegate {
         var result: [HeaderButton] = []
         switch track.kind {
         case .video:
-            result.append(HeaderButton(symbol: track.isHidden ? "eye.slash" : "eye", active: track.isHidden, action: 0))
-            result.append(HeaderButton(symbol: track.isMuted ? "speaker.slash" : "speaker.wave.2", active: track.isMuted, action: 1))
+            result.append(HeaderButton(icon: track.isHidden ? "track.hidden" : "track.visible", active: track.isHidden, action: 0))
+            result.append(HeaderButton(icon: track.isMuted ? "track.muted" : "track.sound", active: track.isMuted, action: 1))
         case .audio:
-            result.append(HeaderButton(symbol: track.isMuted ? "speaker.slash" : "speaker.wave.2", active: track.isMuted, action: 1))
+            result.append(HeaderButton(icon: track.isMuted ? "track.muted" : "track.sound", active: track.isMuted, action: 1))
         case .subtitle:
-            result.append(HeaderButton(symbol: track.isHidden ? "eye.slash" : "captions.bubble", active: track.isHidden, action: 0))
+            result.append(HeaderButton(icon: track.isHidden ? "track.hidden" : "track.captions", active: track.isHidden, action: 0))
         }
-        result.append(HeaderButton(symbol: track.isLocked ? "lock" : "lock.open", active: track.isLocked, action: 2))
+        result.append(HeaderButton(icon: track.isLocked ? "track.locked" : "track.unlocked", active: track.isLocked, action: 2))
         return result
     }
 

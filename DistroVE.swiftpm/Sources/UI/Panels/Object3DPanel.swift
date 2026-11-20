@@ -29,17 +29,17 @@ struct Object3DAddView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Button { controller.addObject3D(.text) } label: { Label("3D 文字を追加", systemImage: "textformat") }
+            Button { controller.addObject3D(.text) } label: { DVLabel("3D 文字を追加", icon: Object3DKind.text.iconID) }
                 .buttonStyle(.borderedProminent)
             PanelTitle(text: "基本の立体")
             HStack {
                 ForEach(Object3DKind.primitives, id: \.self) { kind in
-                    Button { controller.addObject3D(kind) } label: { Label(kind.label, systemImage: kind.symbol) }
+                    Button { controller.addObject3D(kind) } label: { DVLabel(kind.label, icon: kind.iconID) }
                         .buttonStyle(.bordered)
                 }
             }
             .font(.caption)
-            Button { showImporter = true } label: { Label("3D モデルを読み込む（USDZ・OBJ・STL・PLY）", systemImage: "square.and.arrow.down") }
+            Button { showImporter = true } label: { DVLabel("3D モデルを読み込む（USDZ・OBJ・STL・PLY）", icon: "export.model") }
                 .buttonStyle(.bordered)
             Text("位置・大きさ・回転は「変形」、動きの出入りは「アニメ」で付けられます。回転にはキーフレームも打てます。")
                 .font(.caption2)
@@ -106,7 +106,7 @@ struct Object3DTextSection: View {
                 Button(family) { controller.update3D("フォント") { $0.fontName = family } }
             }
         } label: {
-            Label(content.fontName.isEmpty ? "システム" : content.fontName, systemImage: "textformat")
+            DVLabel(content.fontName.isEmpty ? "システム" : content.fontName, icon: "text.font")
         }
     }
 }
@@ -175,11 +175,11 @@ struct Object3DSceneSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             PanelTitle(text: "照明")
-            ChipPicker(items: Lighting3D.allCases, selection: content.lighting, label: { $0.label }) { preset in
+            ChipPicker(items: Lighting3D.allCases, selection: content.lighting, label: { $0.label }, icon: { $0.iconID }) { preset in
                 controller.update3D("照明") { $0.lighting = preset }
             }
             PanelTitle(text: "自動の動き")
-            ChipPicker(items: Motion3D.allCases, selection: content.motion, label: { $0.label }) { motion in
+            ChipPicker(items: Motion3D.allCases, selection: content.motion, label: { $0.label }, icon: { $0.iconID }) { motion in
                 controller.update3D("自動の動き") { $0.motion = motion }
             }
             if content.motion != .none {
