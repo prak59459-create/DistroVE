@@ -37,7 +37,7 @@ final class ForeignVideoDecoder {
                 try makeSession(firstFrame: nil)
             }
         default:
-            throw EngineError.unsupported("映像（\(track.codec.label)）はこの端末では読めません")
+            throw EngineError.unsupported("映像（\(track.codecLabel)）はこの端末では読めません")
         }
     }
 
@@ -115,7 +115,7 @@ final class ForeignVideoDecoder {
                                                             imageBufferAttributes: attributes as CFDictionary, outputCallback: nil,
                                                             decompressionSessionOut: &created)
         guard status == noErr, let made = created else {
-            throw EngineError.unsupported("映像（\(track.codec.label)）はこの端末では読めません")
+            throw EngineError.unsupported("映像（\(track.codecLabel)）はこの端末では読めません")
         }
         format = description
         session = made
@@ -152,7 +152,7 @@ final class ForeignVideoDecoder {
         case .mpeg2:
             return try ForeignVideoDecoder.plainFormat(kCMVideoCodecType_MPEG2Video, width, height)
         default:
-            throw EngineError.unsupported("映像（\(track.codec.label)）はこの端末では読めません")
+            throw EngineError.unsupported("映像（\(track.codecLabel)）はこの端末では読めません")
         }
     }
 

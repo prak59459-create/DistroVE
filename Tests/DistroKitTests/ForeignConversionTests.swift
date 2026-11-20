@@ -134,6 +134,46 @@ final class ForeignConversionTests: XCTestCase {
         }
     }
 
+    /// Vorbis（自前の解読器）の音声だけの MKV。
+    func testMatroskaVorbisAudio() async throws {
+        let result = try await convert("vorbis-stereo.mka")
+        XCTAssertEqual(result.kind, .audio)
+        XCTAssertTrue(result.notes.isEmpty, "\(result.notes)")
+        let asset = AVURLAsset(url: result.url)
+        let duration: Double = try await asset.load(.duration).seconds
+        XCTAssertEqual(duration, 1.5, accuracy: 0.1)
+        let tracks: [AVAssetTrack] = try await asset.loadTracks(withMediaType: .audio)
+        XCTAssertEqual(tracks.count, 1)
+    }
+
+    /// Ogg の Vorbis・Opus・FLAC。
+    func testOggAudioFiles() async throws {
+        for name in ["tone.ogg", "tone.opus", "tone-flac.oga"] {
+            let result = try await convert(name)
+            XCTAssertEqual(result.kind, .audio, name)
+            XCTAssertEqual(result.container, "Ogg", name)
+            XCTAssertTrue(result.notes.isEmpty, "\(name): \(result.notes)")
+            try await check(result, video: false, audio: true)
+        }
+    }
+
+    /// FLV の H.264（B フレームあり）・AAC。
+    func testFLVH264AndAAC() async throws {
+        let result = try await convert("h264-aac.flv")
+        XCTAssertEqual(result.container, "FLV")
+        try await check(result, video: true, audio: true)
+    }
+
+    /// Flash だけの映像（Sorenson Spark）は、名前を出して読めないと伝える。
+    func testFLVSorensonIsReportedByName() async throws {
+        do {
+            _ = try await convert("sorenson-mp3.flv")
+            XCTFail("Sorenson Spark は読めないはず")
+        } catch let EngineError.unsupported(message) {
+            XCTAssertTrue(message.contains("Sorenson"), message)
+        }
+    }
+
     /// 取り込みの入口から：MP4 になり、素材として長さや大きさが入る。
     func testImportThroughMediaStore() async throws {
         let made: MediaStore.ConvertedImport = try await MediaStore.shared.importConverted(at: try fixture("h264-aac-srt.mkv"), progress: nil)

@@ -4,7 +4,7 @@ import Foundation
 
 /// MKV・WebM・AVI の音声を、端末の仕組みで読める 1 本のファイルに書き出す（Q71）。
 /// AAC は ADTS、MP3・MP2・AC-3・E-AC-3 はそのまま並べ、FLAC はネイティブの FLAC、PCM は WAV にする。
-/// Opus は AudioToolbox で解読して WAV にする。Vorbis・DTS は読めない。
+/// Opus は AudioToolbox で、Vorbis は自前の解読器（Core の VorbisDecoder）で解読して WAV にする。DTS は読めない。
 final class ForeignAudioExtractor {
     enum Mode {
         case adts(profile: Int, index: Int, channels: Int)
@@ -12,6 +12,7 @@ final class ForeignAudioExtractor {
         case flac
         case wav(bits: Int, float: Bool, bigEndian: Bool)
         case opus
+        case vorbis
     }
 
     let track: ForeignTrack
@@ -20,6 +21,7 @@ final class ForeignAudioExtractor {
     private let handle: FileHandle
     private var dataBytes: Int64 = 0
     private var opus: OpusDecoder?
+    private var vorbis: VorbisDecoder?
     private(set) var firstTime: Double?
 
     init(track: ForeignTrack, folder: URL) throws {
@@ -36,6 +38,13 @@ final class ForeignAudioExtractor {
             try handle.write(contentsOf: Data(count: 44))
         case .opus:
             opus = try OpusDecoder(track: track)
+            try handle.write(contentsOf: Data(count: 44))
+        case .vorbis:
+            do {
+                vorbis = try VorbisDecoder(codecPrivate: track.codecPrivate)
+            } catch {
+                throw EngineError.unsupported("音声（Vorbis）の設定を読めません")
+            }
             try handle.write(contentsOf: Data(count: 44))
         case .adts, .raw:
             break
@@ -65,8 +74,10 @@ final class ForeignAudioExtractor {
         case .opus:
             if track.channels > 2 { throw EngineError.unsupported("3 チャンネル以上の Opus は読めません") }
             return (.opus, "wav")
+        case .vorbis:
+            return (.vorbis, "wav")
         default:
-            throw EngineError.unsupported("音声（\(track.codec.label)）はこの端末では読めません")
+            throw EngineError.unsupported("音声（\(track.codecLabel)）はこの端末では読めません")
         }
     }
 
@@ -87,6 +98,11 @@ final class ForeignAudioExtractor {
             let pcm: Data = try decoder.decode(packet.data)
             try handle.write(contentsOf: pcm)
             dataBytes += Int64(pcm.count)
+        case .vorbis:
+            guard let decoder = vorbis else { return }
+            let pcm: Data = ForeignAudioExtractor.interleaved(VorbisDecoder.stereo(decoder.decode(packet.data)))
+            try handle.write(contentsOf: pcm)
+            dataBytes += Int64(pcm.count)
         }
     }
 
@@ -101,6 +117,13 @@ final class ForeignAudioExtractor {
         case .opus:
             let header: Data = ForeignAudioExtractor.wavHeader(dataBytes: dataBytes, sampleRate: 48_000,
                                                              channels: max(1, track.channels), bits: 32, float: true)
+            try handle.seek(toOffset: 0)
+            try handle.write(contentsOf: header)
+        case .vorbis:
+            let decoder: VorbisDecoder? = vorbis
+            let rate: Int = Int(decoder?.sampleRate ?? track.sampleRate)
+            let count: Int = min(2, max(1, decoder?.channels ?? track.channels))
+            let header: Data = ForeignAudioExtractor.wavHeader(dataBytes: dataBytes, sampleRate: rate, channels: count, bits: 32, float: true)
             try handle.seek(toOffset: 0)
             try handle.write(contentsOf: header)
         case .adts, .raw, .flac:
@@ -207,6 +230,21 @@ final class ForeignAudioExtractor {
 
     static func le32(_ v: Int) -> Data {
         return Data([UInt8(v & 0xFF), UInt8((v >> 8) & 0xFF), UInt8((v >> 16) & 0xFF), UInt8((v >> 24) & 0xFF)])
+    }
+
+    /// チャンネルごとのサンプルを、チャンネル交互の 32bit 浮動小数（リトルエンディアン）にする。
+    static func interleaved(_ channels: [[Float]]) -> Data {
+        guard let first = channels.first, !first.isEmpty else { return Data() }
+        let count: Int = channels.count
+        let frames: Int = first.count
+        var values: [Float] = Array(repeating: 0, count: frames * count)
+        for c in 0..<count {
+            let samples: [Float] = channels[c]
+            for i in 0..<min(frames, samples.count) {
+                values[i * count + c] = samples[i]
+            }
+        }
+        return values.withUnsafeBufferPointer { (pointer: UnsafeBufferPointer<Float>) in Data(buffer: pointer) }
     }
 
     /// ビッグエンディアンの PCM をリトルエンディアンに直す。

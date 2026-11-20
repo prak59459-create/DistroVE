@@ -159,6 +159,11 @@ struct ForeignTrack: Sendable {
         self.codecName = codecName
         self.codecPrivate = codecPrivate
     }
+
+    /// 知らせに使う名前（種類が分からないときは入れ物での名前）。
+    var codecLabel: String {
+        return codec == .unknown && !codecName.isEmpty ? codecName : codec.label
+    }
 }
 
 /// 1 つのパケット（映像 1 コマ・音声のかたまり・字幕 1 つ）。
@@ -186,14 +191,14 @@ enum ForeignMediaError: Error, LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .notRecognized: return "MKV・WebM・AVI のどれでもありません。"
+        case .notRecognized: return "MKV・WebM・AVI・Ogg・FLV のどれでもありません。"
         case .broken(let detail): return "ファイルが壊れているか、対応していない作りです（\(detail)）。"
         }
     }
 }
 
 enum ForeignContainer {
-    static let extensions: Set<String> = ["mkv", "mka", "mks", "webm", "avi"]
+    static let extensions: Set<String> = ["mkv", "mka", "mks", "webm", "avi", "ogg", "oga", "ogv", "opus", "flv"]
 
     /// 先頭のしるしで入れ物を見分けて開く。
     static func open(url: URL) throws -> ForeignDemuxer {
@@ -212,6 +217,12 @@ enum ForeignContainer {
         }
         if head.count >= 12 && head.prefix(4) == Data("RIFF".utf8) && head.subdata(in: 8..<12) == Data("AVI ".utf8) {
             return try AVIReader(reader)
+        }
+        if head.count >= 4 && head.prefix(4) == Data("OggS".utf8) {
+            return try OggReader(reader)
+        }
+        if head.count >= 4 && head.prefix(3) == Data("FLV".utf8) && head[head.startIndex + 3] == 1 {
+            return try FLVReader(reader)
         }
         throw ForeignMediaError.notRecognized
     }

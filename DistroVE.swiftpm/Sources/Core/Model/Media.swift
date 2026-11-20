@@ -121,9 +121,11 @@ enum MediaFormatSupport {
     static let gifExtensions: Set<String> = ["gif"]
     static let modelExtensions: Set<String> = ["usdz", "usd", "usda", "usdc", "obj", "stl", "ply", "abc"]
     /// 入れ物を Swift で読んで MP4 に変える形式（ForeignContainer）
-    static let convertedExtensions: Set<String> = ["mkv", "mka", "mks", "webm", "avi"]
-    /// 中身（WMV・RealVideo・Theora など）を端末の仕組みで解読できない形式
-    static let unsupportedExtensions: Set<String> = ["wmv", "asf", "flv", "rm", "rmvb", "ogv"]
+    static let convertedExtensions: Set<String> = ["mkv", "mka", "mks", "webm", "avi", "ogg", "oga", "ogv", "opus", "flv"]
+    /// 入れ物の中身が音声だけのことが多い形式
+    static let convertedAudioExtensions: Set<String> = ["mka", "ogg", "oga", "opus"]
+    /// 中身（WMV・RealVideo など）を端末の仕組みでも自前でも解読できない形式
+    static let unsupportedExtensions: Set<String> = ["wmv", "asf", "rm", "rmvb"]
 
     static func kind(forExtension ext: String) -> MediaKind? {
         let lower: String = ext.lowercased()
@@ -132,7 +134,7 @@ enum MediaFormatSupport {
         if gifExtensions.contains(lower) { return .gif }
         if imageExtensions.contains(lower) { return .image }
         if modelExtensions.contains(lower) { return .model3D }
-        if convertedExtensions.contains(lower) { return lower == "mka" ? .audio : .video }
+        if convertedExtensions.contains(lower) { return convertedAudioExtensions.contains(lower) ? .audio : .video }
         return nil
     }
 

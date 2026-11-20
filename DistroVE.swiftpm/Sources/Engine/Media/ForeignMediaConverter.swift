@@ -23,23 +23,30 @@ enum ForeignMediaConverter {
         AppPaths.ensure(work)
         defer { try? FileManager.default.removeItem(at: work) }
         let videoTrack: ForeignTrack? = ForeignMediaConverter.pick(demuxer.tracks, .video)
-        let audioTrack: ForeignTrack? = ForeignMediaConverter.pick(demuxer.tracks, .audio)
         let subtitleTracks: [ForeignTrack] = demuxer.tracks.filter { $0.kind == .subtitle && ($0.codec == .srt || $0.codec == .ass) }
         var notes: [String] = []
         var video: VideoPass?
         if let track = videoTrack {
             video = try VideoPass(track: track, output: work.appendingPathComponent("video.mp4"), decodeOrder: demuxer is AVIReader)
         }
+        // 音声は読めるものを先に試す（既定の音声が DTS でも、ほかに AC-3 などがあればそれを使う）
         var audio: ForeignAudioExtractor?
-        if let track = audioTrack {
+        var audioTrack: ForeignTrack?
+        var unreadable: [String] = []
+        for track in ForeignMediaConverter.audioCandidates(demuxer.tracks) {
             do {
                 audio = try ForeignAudioExtractor(track: track, folder: work)
+                audioTrack = track
+                break
             } catch {
-                notes.append("音声（\(track.codec.label)）はこの端末では読めないため、映像だけを取り込みました。")
+                if !unreadable.contains(track.codecLabel) { unreadable.append(track.codecLabel) }
             }
         }
+        if audio == nil && !unreadable.isEmpty {
+            notes.append("音声（\(unreadable.joined(separator: "・"))）はこの端末では読めないため、映像だけを取り込みました。")
+        }
         if video == nil && audio == nil {
-            let names: String = demuxer.tracks.map { $0.codec.label }.joined(separator: "・")
+            let names: String = demuxer.tracks.map { $0.codecLabel }.joined(separator: "・")
             throw EngineError.unsupported("この \(demuxer.containerName) の中身（\(names)）は読めません")
         }
         var subtitlePackets: [Int: [ForeignPacket]] = [:]
@@ -84,6 +91,23 @@ enum ForeignMediaConverter {
     static func pick(_ tracks: [ForeignTrack], _ kind: ForeignTrackKind) -> ForeignTrack? {
         let candidates: [ForeignTrack] = tracks.filter { $0.kind == kind }
         return candidates.first { $0.isDefault } ?? candidates.first
+    }
+
+    /// 自前または端末の仕組みで読める音声
+    static let readableAudio: Set<ForeignCodec> = [.aac, .mp3, .mp2, .ac3, .eac3, .flac, .pcm, .opus, .vorbis]
+
+    /// 試す順の音声トラック：読めて「既定」の印があるもの → 読めるもの → そのほか（「既定」が先）。
+    static func audioCandidates(_ tracks: [ForeignTrack]) -> [ForeignTrack] {
+        let audio: [ForeignTrack] = tracks.filter { $0.kind == .audio }
+        func rank(_ track: ForeignTrack) -> Int {
+            let readable: Bool = readableAudio.contains(track.codec)
+            return (readable ? 0 : 2) + (track.isDefault ? 0 : 1)
+        }
+        return audio.enumerated().sorted { a, b in
+            let ra: Int = rank(a.element)
+            let rb: Int = rank(b.element)
+            return ra != rb ? ra < rb : a.offset < b.offset
+        }.map { $0.element }
     }
 
     /// 字幕（日本語のトラックがあればそれ、なければ最初のもの）。
@@ -277,7 +301,7 @@ final class VideoPass {
     func finish() async throws -> URL {
         try await enqueue(decoder.flush(), all: true)
         guard let writer = writer, let input = input, written > 0 else {
-            throw EngineError.unsupported("映像（\(decoder.track.codec.label)）を解読できませんでした")
+            throw EngineError.unsupported("映像（\(decoder.track.codecLabel)）を解読できませんでした")
         }
         input.markAsFinished()
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
