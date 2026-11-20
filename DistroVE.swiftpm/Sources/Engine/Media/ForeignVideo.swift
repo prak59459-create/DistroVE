@@ -6,8 +6,8 @@ import Foundation
 import ImageIO
 import VideoToolbox
 
-/// MKV・WebM・AVI の映像を端末の仕組みで解読する（Q71）。
-/// H.264・HEVC・MPEG-4・MPEG-2・VP9・AV1 は VideoToolbox、Motion JPEG は ImageIO を使う。
+/// MKV・WebM・AVI・FLV の映像を解読する（Q71）。
+/// H.264・HEVC・MPEG-4・MPEG-2・VP9・AV1 は VideoToolbox、Motion JPEG は ImageIO、VP8 は自前の解読器（Core の VP8Decoder）を使う。
 final class ForeignVideoDecoder {
     struct Frame {
         let image: CVPixelBuffer
@@ -24,6 +24,9 @@ final class ForeignVideoDecoder {
     private var nextOutputIndex: Int = 0
     private let collector = FrameCollector()
     private var jpegPool: CVPixelBufferPool?
+    private var vp8: VP8Decoder?
+    private var vp8Pool: CVPixelBufferPool?
+    private var vp8Size: (width: Int, height: Int) = (0, 0)
     private var failures: Int = 0
 
     init(track: ForeignTrack, timesAreDecodeOrder: Bool) throws {
@@ -32,6 +35,8 @@ final class ForeignVideoDecoder {
         switch track.codec {
         case .mjpeg:
             return
+        case .vp8:
+            vp8 = VP8Decoder()
         case .h264, .hevc, .mpeg4, .mpeg2, .vp9, .av1:
             if !track.codecPrivate.isEmpty || track.codec == .mpeg2 || track.codec == .vp9 {
                 try makeSession(firstFrame: nil)
@@ -49,6 +54,20 @@ final class ForeignVideoDecoder {
                 return []
             }
             return [Frame(image: image, time: packet.time)]
+        }
+        if let decoder = vp8 {
+            do {
+                // 表示しないフレーム（altref）は nil。時刻は次のフレームのものを使う
+                guard let picture = try decoder.decode(packet.data) else { return [] }
+                guard let image = vp8PixelBuffer(picture) else {
+                    failures += 1
+                    return []
+                }
+                return [Frame(image: image, time: packet.time)]
+            } catch {
+                failures += 1
+                return []
+            }
         }
         if session == nil {
             // 設定（SPS・PPS・VOL）が最初のキーフレームにしかないとき
@@ -322,6 +341,53 @@ final class ForeignVideoDecoder {
     }
 
     // MARK: Motion JPEG
+
+    /// VP8 の I420 を、H.264 の書き手が読める NV12（ビデオの範囲・BT.601）にする。
+    private func vp8PixelBuffer(_ picture: VP8Decoder.Image) -> CVPixelBuffer? {
+        let width: Int = picture.width
+        let height: Int = picture.height
+        if vp8Pool == nil || vp8Size.width != width || vp8Size.height != height {
+            var attributes: [String: Any] = [:]
+            attributes[kCVPixelBufferPixelFormatTypeKey as String] = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+            attributes[kCVPixelBufferWidthKey as String] = width
+            attributes[kCVPixelBufferHeightKey as String] = height
+            attributes[kCVPixelBufferIOSurfacePropertiesKey as String] = [String: Any]()
+            var pool: CVPixelBufferPool?
+            CVPixelBufferPoolCreate(kCFAllocatorDefault, nil, attributes as CFDictionary, &pool)
+            vp8Pool = pool
+            vp8Size = (width, height)
+        }
+        guard let pool = vp8Pool else { return nil }
+        var made: CVPixelBuffer?
+        CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &made)
+        guard let buffer = made else { return nil }
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        guard let yBase = CVPixelBufferGetBaseAddressOfPlane(buffer, 0)?.assumingMemoryBound(to: UInt8.self),
+              let cBase = CVPixelBufferGetBaseAddressOfPlane(buffer, 1)?.assumingMemoryBound(to: UInt8.self) else { return nil }
+        let yRow: Int = CVPixelBufferGetBytesPerRowOfPlane(buffer, 0)
+        let cRow: Int = CVPixelBufferGetBytesPerRowOfPlane(buffer, 1)
+        picture.y.withUnsafeBufferPointer { (source: UnsafeBufferPointer<UInt8>) in
+            guard let from = source.baseAddress else { return }
+            for row in 0..<height {
+                (yBase + row * yRow).update(from: from + row * width, count: width)
+            }
+        }
+        let cw: Int = picture.chromaWidth
+        let rows: Int = min(picture.chromaHeight, CVPixelBufferGetHeightOfPlane(buffer, 1))
+        let columns: Int = min(cw, CVPixelBufferGetWidthOfPlane(buffer, 1))
+        for row in 0..<rows {
+            let line: UnsafeMutablePointer<UInt8> = cBase + row * cRow
+            for x in 0..<columns {
+                line[2 * x] = picture.u[row * cw + x]
+                line[2 * x + 1] = picture.v[row * cw + x]
+            }
+        }
+        CVBufferSetAttachment(buffer, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_601_4, .shouldPropagate)
+        CVBufferSetAttachment(buffer, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_SMPTE_C, .shouldPropagate)
+        CVBufferSetAttachment(buffer, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
+        return buffer
+    }
 
     private func decodeJPEG(_ data: Data) -> CVPixelBuffer? {
         let jpeg: Data = MotionJPEG.withHuffmanTables(data)

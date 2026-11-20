@@ -125,13 +125,24 @@ final class ForeignConversionTests: XCTestCase {
         }
     }
 
-    func testVP8IsReportedAsUnsupported() async throws {
-        do {
-            _ = try await convert("vp8-vorbis.webm")
-            XCTFail("VP8 は読めないはず")
-        } catch let EngineError.unsupported(message) {
-            XCTAssertTrue(message.contains("VP8"), message)
-        }
+    /// VP8（自前の解読器）と Vorbis（自前の解読器）の WebM。
+    func testWebMVP8AndVorbis() async throws {
+        let result = try await convert("vp8-vorbis.webm")
+        XCTAssertEqual(result.container, "WebM")
+        XCTAssertTrue(result.notes.isEmpty, "\(result.notes)")
+        try await check(result, video: true, audio: true)
+    }
+
+    /// 表示しない altref のフレームを含む VP8。
+    func testWebMVP8WithAltref() async throws {
+        let result = try await convert("vp8-altref.webm")
+        let asset = AVURLAsset(url: result.url)
+        let track: AVAssetTrack = try XCTUnwrap(try await asset.loadTracks(withMediaType: .video).first)
+        let size: CGSize = try await track.load(.naturalSize)
+        XCTAssertEqual(size.width, 176)
+        XCTAssertEqual(size.height, 100)
+        let duration: Double = try await asset.load(.duration).seconds
+        XCTAssertEqual(duration, 1, accuracy: 0.15)
     }
 
     /// Vorbis（自前の解読器）の音声だけの MKV。

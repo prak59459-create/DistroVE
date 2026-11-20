@@ -201,7 +201,7 @@ extension EditorController {
                 let base: Double = Double(i)
                 do {
                     if MediaFormatSupport.convertedExtensions.contains(url.pathExtension.lowercased()) {
-                        // MKV・WebM・AVI（Q71）は MP4 に変えてから取り込む
+                        // MKV・WebM・AVI・Ogg・FLV（Q71）は MP4 に変えてから取り込む
                         let made: MediaStore.ConvertedImport = try await MediaStore.shared.importConverted(at: url) { p in progress((base + p) / count) }
                         assets.append(made.asset)
                         if !made.subtitles.isEmpty { subtitles[made.asset.id] = made.subtitles }
