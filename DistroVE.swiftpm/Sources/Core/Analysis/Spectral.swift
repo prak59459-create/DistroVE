@@ -321,7 +321,7 @@ enum SpeakerClustering {
             var farthest: Int = 0
             var far: Double = -1
             for (i, row) in rows.enumerated() {
-                let d: Double = centers.map { SpeakerClustering.distance($0, row) }.min() ?? 0
+                let d: Double = SpeakerClustering.nearestDistance(row, centers)
                 if d > far {
                     far = d
                     farthest = i
@@ -348,14 +348,41 @@ enum SpeakerClustering {
                 }
             }
             for c in 0..<k {
-                let members: [[Double]] = rows.enumerated().filter { labels[$0.offset] == c }.map { $0.element }
-                if members.isEmpty { continue }
-                let width: Int = members[0].count
-                centers[c] = (0..<width).map { d in members.reduce(0) { $0 + $1[d] } / Double(members.count) }
+                var members: [[Double]] = []
+                for (i, row) in rows.enumerated() where labels[i] == c {
+                    members.append(row)
+                }
+                if let mean = SpeakerClustering.mean(members) { centers[c] = mean }
             }
             if !changed { break }
         }
         return labels
+    }
+
+    /// いちばん近い中心までの距離。
+    static func nearestDistance(_ row: [Double], _ centers: [[Double]]) -> Double {
+        var best: Double = Double.infinity
+        for center in centers {
+            let d: Double = SpeakerClustering.distance(center, row)
+            if d < best { best = d }
+        }
+        return best.isFinite ? best : 0
+    }
+
+    /// 平均の点（空なら nil）。
+    static func mean(_ members: [[Double]]) -> [Double]? {
+        guard let first = members.first else { return nil }
+        var sum: [Double] = Array(repeating: 0, count: first.count)
+        for member in members {
+            for d in 0..<min(sum.count, member.count) {
+                sum[d] += member[d]
+            }
+        }
+        let count: Double = Double(members.count)
+        for d in 0..<sum.count {
+            sum[d] /= count
+        }
+        return sum
     }
 
     /// シルエット係数（-1〜1。大きいほどきれいに分かれている）。
