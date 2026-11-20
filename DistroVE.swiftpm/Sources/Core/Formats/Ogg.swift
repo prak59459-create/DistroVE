@@ -119,57 +119,103 @@ final class OggReader: ForeignDemuxer {
         return body.prefix(length)
     }
 
+    /// 最初のパケットから分かったこと。
+    private struct StreamStart {
+        var track: ForeignTrack
+        /// 見出しのパケット数（-1 は FLAC の「数が書かれていない」）
+        var headers: Int
+        var rate: Double = 0
+        var preSkip: Int64 = 0
+    }
+
     /// 最初のパケットで中身の種類を見分けてトラックを作る。
     private func addStream(_ serial: UInt32, _ first: Data) {
         let bytes: [UInt8] = [UInt8](first.prefix(64))
         let number: Int = order.count + 1
-        var track: ForeignTrack
-        var headers: Int = 0
-        var rate: Double = 0
-        var preSkip: Int64 = 0
-        if bytes.count >= 30 && bytes[0] == 1 && Data(bytes[1..<7]) == Data("vorbis".utf8) {
-            track = ForeignTrack(number: number, kind: .audio, codec: .vorbis, codecName: "vorbis")
-            track.channels = Int(bytes[11])
-            rate = Double(Bytes.littleEndian(first, 12, 4))
-            headers = 3
-        } else if bytes.count >= 19 && Data(bytes[0..<8]) == Data("OpusHead".utf8) {
-            track = ForeignTrack(number: number, kind: .audio, codec: .opus, codecName: "opus")
-            track.channels = Int(bytes[9])
-            preSkip = Int64(Bytes.littleEndian(first, 10, 2))
-            track.codecDelay = Double(preSkip) / 48_000
-            rate = 48_000
-            headers = 2
-        } else if bytes.count >= 51 && bytes[0] == 0x7F && Data(bytes[1..<5]) == Data("FLAC".utf8) {
-            track = ForeignTrack(number: number, kind: .audio, codec: .flac, codecName: "flac")
-            // 13 バイト目から "fLaC" と STREAMINFO（見出し 4 + 中身 34）
-            let info: Int = 9 + 4 + 4
-            let b10: Int = Int(bytes[info + 10])
-            let b11: Int = Int(bytes[info + 11])
-            let b12: Int = Int(bytes[info + 12])
-            let b13: Int = Int(bytes[info + 13])
-            let hertz: Int = (b10 << 12) | (b11 << 4) | (b12 >> 4)
-            rate = Double(hertz)
-            track.channels = ((b12 >> 1) & 0x7) + 1
-            let bits: Int = ((b12 & 1) << 4) | (b13 >> 4)
-            track.bitsPerSample = bits + 1
-            let more: Int = (Int(bytes[7]) << 8) | Int(bytes[8])
-            headers = more == 0 ? -1 : more + 1
-        } else if bytes.count >= 7 && bytes[0] == 0x80 && Data(bytes[1..<7]) == Data("theora".utf8) {
-            track = ForeignTrack(number: number, kind: .video, codec: .theora, codecName: "theora")
-            if bytes.count >= 20 {
-                track.width = (Int(bytes[14]) << 16) | (Int(bytes[15]) << 8) | Int(bytes[16])
-                track.height = (Int(bytes[17]) << 16) | (Int(bytes[18]) << 8) | Int(bytes[19])
-            }
-            headers = 3
+        let start: StreamStart
+        if let found = OggReader.vorbisStart(bytes, first, number) {
+            start = found
+        } else if let found = OggReader.opusStart(bytes, first, number) {
+            start = found
+        } else if let found = OggReader.flacStart(bytes, number) {
+            start = found
+        } else if let found = OggReader.theoraStart(bytes, number) {
+            start = found
         } else {
-            let name: String = String(decoding: bytes.prefix(8), as: UTF8.self).trimmingCharacters(in: .whitespaces)
-            let isSpeex: Bool = name.hasPrefix("Speex")
-            track = ForeignTrack(number: number, kind: isSpeex ? .audio : .other, codec: .unknown, codecName: name)
-            headers = 0
+            start = OggReader.unknownStart(bytes, number)
         }
-        track.sampleRate = rate
-        streams[serial] = Stream(track: track, headersLeft: headers, rate: rate, preSkip: preSkip)
+        var track: ForeignTrack = start.track
+        track.sampleRate = start.rate
+        streams[serial] = Stream(track: track, headersLeft: start.headers, rate: start.rate, preSkip: start.preSkip)
         order.append(serial)
+    }
+
+    /// bytes の offset から text の文字が並んでいるか。
+    private static func matches(_ bytes: [UInt8], at offset: Int, _ text: String) -> Bool {
+        let expected: [UInt8] = Array(text.utf8)
+        if bytes.count < offset + expected.count { return false }
+        let found: [UInt8] = Array(bytes[offset..<(offset + expected.count)])
+        return found == expected
+    }
+
+    private static func vorbisStart(_ bytes: [UInt8], _ first: Data, _ number: Int) -> StreamStart? {
+        guard bytes.count >= 30, bytes[0] == 1, matches(bytes, at: 1, "vorbis") else { return nil }
+        var track = ForeignTrack(number: number, kind: .audio, codec: .vorbis, codecName: "vorbis")
+        track.channels = Int(bytes[11])
+        let rate: Double = Double(Bytes.littleEndian(first, 12, 4))
+        return StreamStart(track: track, headers: 3, rate: rate)
+    }
+
+    private static func opusStart(_ bytes: [UInt8], _ first: Data, _ number: Int) -> StreamStart? {
+        guard bytes.count >= 19, matches(bytes, at: 0, "OpusHead") else { return nil }
+        var track = ForeignTrack(number: number, kind: .audio, codec: .opus, codecName: "opus")
+        track.channels = Int(bytes[9])
+        let preSkip: Int64 = Int64(Bytes.littleEndian(first, 10, 2))
+        track.codecDelay = Double(preSkip) / 48_000
+        return StreamStart(track: track, headers: 2, rate: 48_000, preSkip: preSkip)
+    }
+
+    private static func flacStart(_ bytes: [UInt8], _ number: Int) -> StreamStart? {
+        guard bytes.count >= 51, bytes[0] == 0x7F, matches(bytes, at: 1, "FLAC") else { return nil }
+        var track = ForeignTrack(number: number, kind: .audio, codec: .flac, codecName: "flac")
+        // 13 バイト目から "fLaC" と STREAMINFO（見出し 4 + 中身 34）
+        let info: Int = 9 + 4 + 4
+        let b10: Int = Int(bytes[info + 10])
+        let b11: Int = Int(bytes[info + 11])
+        let b12: Int = Int(bytes[info + 12])
+        let b13: Int = Int(bytes[info + 13])
+        let hertz: Int = (b10 << 12) | (b11 << 4) | (b12 >> 4)
+        track.channels = ((b12 >> 1) & 0x7) + 1
+        let bits: Int = ((b12 & 1) << 4) | (b13 >> 4)
+        track.bitsPerSample = bits + 1
+        let high: Int = Int(bytes[7]) << 8
+        let more: Int = high | Int(bytes[8])
+        let headers: Int = more == 0 ? -1 : more + 1
+        return StreamStart(track: track, headers: headers, rate: Double(hertz))
+    }
+
+    private static func theoraStart(_ bytes: [UInt8], _ number: Int) -> StreamStart? {
+        guard bytes.count >= 7, bytes[0] == 0x80, matches(bytes, at: 1, "theora") else { return nil }
+        var track = ForeignTrack(number: number, kind: .video, codec: .theora, codecName: "theora")
+        if bytes.count >= 20 {
+            track.width = threeBytes(bytes, 14)
+            track.height = threeBytes(bytes, 17)
+        }
+        return StreamStart(track: track, headers: 3)
+    }
+
+    /// 3 バイトのビッグエンディアン。
+    private static func threeBytes(_ bytes: [UInt8], _ at: Int) -> Int {
+        let high: Int = Int(bytes[at]) << 16
+        let middle: Int = Int(bytes[at + 1]) << 8
+        return high | middle | Int(bytes[at + 2])
+    }
+
+    private static func unknownStart(_ bytes: [UInt8], _ number: Int) -> StreamStart {
+        let name: String = String(decoding: bytes.prefix(8), as: UTF8.self).trimmingCharacters(in: .whitespaces)
+        let kind: ForeignTrackKind = name.hasPrefix("Speex") ? .audio : .other
+        let track = ForeignTrack(number: number, kind: kind, codec: .unknown, codecName: name)
+        return StreamStart(track: track, headers: 0)
     }
 
     /// 組み上がったパケットを、見出しなら取っておき、音声なら queue に入れる。

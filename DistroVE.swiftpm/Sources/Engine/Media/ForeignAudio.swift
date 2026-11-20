@@ -197,18 +197,16 @@ final class ForeignAudioExtractor {
     static func flacHeader(_ codecPrivate: Data) -> Data {
         var data: Data = codecPrivate
         if data.prefix(4) != Data("fLaC".utf8) {
-            var fixed = Data("fLaC".utf8)
-            fixed.append(contentsOf: [0x80, 0x00, 0x00, UInt8(min(255, data.count))])
-            fixed.append(data)
-            return fixed
+            return flacHeaderAdded(to: data)
         }
         var offset: Int = 4
         var lastHeader: Int = -1
         while offset + 4 <= data.count {
             lastHeader = offset
             let base: Int = data.startIndex + offset
-            let size: Int = Int(data[base + 1]) << 16 | Int(data[base + 2]) << 8 | Int(data[base + 3])
-            if data[base] & 0x80 != 0 { break }
+            let size: Int = blockSize(data, at: base + 1)
+            let flags: UInt8 = data[base]
+            if flags & 0x80 != 0 { break }
             offset += 4 + size
         }
         if lastHeader >= 0 {
@@ -243,7 +241,30 @@ final class ForeignAudioExtractor {
     }
 
     static func le32(_ v: Int) -> Data {
-        return Data([UInt8(v & 0xFF), UInt8((v >> 8) & 0xFF), UInt8((v >> 16) & 0xFF), UInt8((v >> 24) & 0xFF)])
+        var bytes: [UInt8] = []
+        let shifts: [Int] = [0, 8, 16, 24]
+        for shift in shifts {
+            bytes.append(UInt8(truncatingIfNeeded: v >> shift))
+        }
+        return Data(bytes)
+    }
+
+    /// 見出しの無いメタデータの前に "fLaC" と「最後のブロック」の見出しを付ける。
+    private static func flacHeaderAdded(to data: Data) -> Data {
+        var fixed = Data("fLaC".utf8)
+        let length: UInt8 = UInt8(min(255, data.count))
+        let header: [UInt8] = [0x80, 0x00, 0x00, length]
+        fixed.append(contentsOf: header)
+        fixed.append(data)
+        return fixed
+    }
+
+    /// 3 バイトのビッグエンディアンの長さ。
+    private static func blockSize(_ data: Data, at index: Int) -> Int {
+        let high: Int = Int(data[index]) << 16
+        let middle: Int = Int(data[index + 1]) << 8
+        let low: Int = Int(data[index + 2])
+        return high | middle | low
     }
 
     /// チャンネルごとのサンプルを、チャンネル交互の 32bit 浮動小数（リトルエンディアン）にする。

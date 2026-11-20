@@ -257,20 +257,8 @@ struct SmoothCutPlan: Equatable, Sendable {
         let frameTicks: Int64 = max(1, Time.frameDuration(fps: fps).ticks)
         let start: Int64 = b.start.ticks - half
         let length: Int64 = half * 2
-        var times: [Double] = []
-        var steps: [Double] = []
-        var index: Int64 = start >= 0 ? (start + frameTicks - 1) / frameTicks : -((-start) / frameTicks)
-        while index * frameTicks < start + length {
-            let local: Int64 = index * frameTicks - start
-            if local >= 0 {
-                times.append(Double(local) / Double(Time.timescale))
-                // 両端でゆっくり、真ん中で速く変える
-                let p: Double = Num.clamp((Double(local) + Double(frameTicks) / 2) / Double(length), 0, 1)
-                steps.append(p * p * (3 - 2 * p))
-            }
-            index += 1
-        }
-        if times.isEmpty { return nil }
+        let frames: (times: [Double], steps: [Double]) = SmoothCutPlan.frames(start: start, length: length, frameTicks: frameTicks)
+        if frames.times.isEmpty { return nil }
         // 区間の端で絵が飛ばないよう、区間の始まりで A が写すコマから、区間の終わりで B が写すコマへ変形させる
         let mapA = SpeedMap(settings: a.speed)
         let mapB = SpeedMap(settings: b.speed)
@@ -280,19 +268,64 @@ struct SmoothCutPlan: Equatable, Sendable {
         let toTime: Double = (b.sourceStart + offsetB).seconds
         self.windowStart = Time(ticks: start)
         self.duration = Time(ticks: length)
-        self.outputTimes = times
-        self.progress = steps
+        self.outputTimes = frames.times
+        self.progress = frames.steps
         self.fromTime = fromTime
         self.toTime = toTime
         self.fps = fps
-        let phase: Int64 = ((start % frameTicks) + frameTicks) % frameTicks
+        let shifted: Int64 = (start % frameTicks) + frameTicks
+        let phase: Int64 = shifted % frameTicks
+        self.signature = SmoothCutPlan.makeSignature(assetA: assetA, assetB: assetB, fromTime: fromTime, toTime: toTime,
+                                                     length: length, phase: phase, fps: fps)
+    }
+
+    /// 区間の中のコマの時刻（区間の始まりからの秒）と、変形の進み具合（両端でゆっくり、真ん中で速く）。
+    static func frames(start: Int64, length: Int64, frameTicks: Int64) -> (times: [Double], steps: [Double]) {
+        var times: [Double] = []
+        var steps: [Double] = []
+        var index: Int64 = firstFrame(start: start, frameTicks: frameTicks)
+        let end: Int64 = start + length
+        let timescale: Double = Double(Time.timescale)
+        let half: Double = Double(frameTicks) / 2
+        while index * frameTicks < end {
+            let local: Int64 = index * frameTicks - start
+            if local >= 0 {
+                times.append(Double(local) / timescale)
+                let raw: Double = (Double(local) + half) / Double(length)
+                steps.append(ease(Num.clamp(raw, 0, 1)))
+            }
+            index += 1
+        }
+        return (times, steps)
+    }
+
+    /// start 以後で最初のコマの番号。
+    private static func firstFrame(start: Int64, frameTicks: Int64) -> Int64 {
+        if start >= 0 {
+            return (start + frameTicks - 1) / frameTicks
+        }
+        let back: Int64 = (-start) / frameTicks
+        return -back
+    }
+
+    /// 両端でゆっくり、真ん中で速く（smoothstep）。
+    private static func ease(_ p: Double) -> Double {
+        let rise: Double = 3 - 2 * p
+        return p * p * rise
+    }
+
+    private static func makeSignature(assetA: MediaAsset, assetB: MediaAsset, fromTime: Double, toTime: Double,
+                                      length: Int64, phase: Int64, fps: Double) -> String {
+        let from: Int = Int((fromTime * 60_000).rounded())
+        let to: Int = Int((toTime * 60_000).rounded())
+        let rate: Int = Int((fps * 1000).rounded())
         var parts: [String] = ["m\(SmoothCutPlan.version)", assetA.id.uuidString, assetB.id.uuidString]
-        parts.append("\(Int((fromTime * 60_000).rounded()))")
-        parts.append("\(Int((toTime * 60_000).rounded()))")
-        parts.append("\(length)")
-        parts.append("\(phase)")
-        parts.append("\(Int((fps * 1000).rounded()))")
-        self.signature = parts.joined(separator: "|")
+        parts.append(String(from))
+        parts.append(String(to))
+        parts.append(String(length))
+        parts.append(String(phase))
+        parts.append(String(rate))
+        return parts.joined(separator: "|")
     }
 
     /// プロジェクトのメイントラックにあるスムースカットの計画（a の id と b の id、素材）。
