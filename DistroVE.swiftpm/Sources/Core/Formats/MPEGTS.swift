@@ -326,7 +326,12 @@ final class TSReader: ForeignDemuxer {
         let p2: Int64 = Int64(b[i + 2] >> 1)
         let p3: Int64 = Int64(b[i + 3])
         let p4: Int64 = Int64(b[i + 4] >> 1)
-        return (p0 << 30) | (p1 << 22) | (p2 << 15) | (p3 << 7) | p4
+        var value: Int64 = p0 << 30
+        value |= p1 << 22
+        value |= p2 << 15
+        value |= p3 << 7
+        value |= p4
+        return value
     }
 
     private func flush(_ pid: Int) {

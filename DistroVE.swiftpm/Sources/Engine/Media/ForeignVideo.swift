@@ -348,7 +348,11 @@ final class ForeignVideoDecoder {
         var result = Data()
         for unit in ForeignVideoDecoder.nalUnits(data) {
             let n: Int = unit.count
-            result.append(contentsOf: [UInt8((n >> 24) & 0xFF), UInt8((n >> 16) & 0xFF), UInt8((n >> 8) & 0xFF), UInt8(n & 0xFF)])
+            var length: [UInt8] = []
+            for shift in [24, 16, 8, 0] {
+                length.append(UInt8(truncatingIfNeeded: n >> shift))
+            }
+            result.append(contentsOf: length)
             result.append(unit)
         }
         return result

@@ -20,6 +20,9 @@ final class ForeignAudioExtractor {
     private let mode: Mode
     private let handle: FileHandle
     private var dataBytes: Int64 = 0
+    /// FLAC の見出し（書き終えたときにサンプル数を書き直す）と、数えたサンプル数
+    private var flacHeader: Data = Data()
+    private var flacSamples: Int = 0
     private var opus: OpusDecoder?
     private var vorbis: VorbisDecoder?
     private(set) var firstTime: Double?
@@ -33,7 +36,8 @@ final class ForeignAudioExtractor {
         handle = try FileHandle(forWritingTo: url)
         switch mode {
         case .flac:
-            try handle.write(contentsOf: ForeignAudioExtractor.flacHeader(track.codecPrivate))
+            flacHeader = ForeignAudioExtractor.flacHeader(track.codecPrivate)
+            try handle.write(contentsOf: flacHeader)
         case .wav:
             try handle.write(contentsOf: Data(count: 44))
         case .opus:
@@ -88,8 +92,11 @@ final class ForeignAudioExtractor {
         case .adts(let profile, let index, let channels):
             try handle.write(contentsOf: ForeignAudioExtractor.adtsHeader(profile: profile, index: index, channels: channels, payload: packet.data.count))
             try handle.write(contentsOf: packet.data)
-        case .raw, .flac:
+        case .raw:
             try handle.write(contentsOf: packet.data)
+        case .flac:
+            try handle.write(contentsOf: packet.data)
+            flacSamples += FLACInfo.blockSize(packet.data) ?? 0
         case .wav(let bits, _, let bigEndian):
             let samples: Data = bigEndian ? ForeignAudioExtractor.swapped(packet.data, bytesPerSample: max(1, bits / 8)) : packet.data
             try handle.write(contentsOf: samples)
@@ -110,6 +117,12 @@ final class ForeignAudioExtractor {
     /// 書き終える。WAV は大きさを頭に書き戻す。
     func finish() throws -> URL {
         switch mode {
+        case .flac:
+            // 全体のサンプル数が不明（0）なら、数えた値に書き直す
+            if FLACInfo.totalSamples(flacHeader) == 0 && flacSamples > 0 {
+                try handle.seek(toOffset: 0)
+                try handle.write(contentsOf: FLACInfo.withTotalSamples(flacHeader, flacSamples))
+            }
         case .wav(let bits, let float, _):
             let header: Data = ForeignAudioExtractor.wavHeader(dataBytes: dataBytes, sampleRate: Int(track.sampleRate),
                                                              channels: max(1, track.channels), bits: bits, float: float)
@@ -127,7 +140,7 @@ final class ForeignAudioExtractor {
             let header: Data = ForeignAudioExtractor.wavHeader(dataBytes: dataBytes, sampleRate: rate, channels: count, bits: 32, float: true)
             try handle.seek(toOffset: 0)
             try handle.write(contentsOf: header)
-        case .adts, .raw, .flac:
+        case .adts, .raw:
             break
         }
         try handle.close()

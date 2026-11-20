@@ -400,3 +400,69 @@ enum Bytes {
         return 0
     }
 }
+
+/// FLAC の補い（Q71）。STREAMINFO の「全体のサンプル数」が 0（Ogg の FLAC などで不明）のままだと端末の仕組みが読めないため、
+/// 各フレームの見出しからサンプル数を数えて書き直す。
+enum FLACInfo {
+    /// フレームの見出し（同期 0xFFF8/0xFFF9）のブロックの大きさ（サンプル数）。見出しでなければ nil。
+    static func blockSize(_ frame: Data) -> Int? {
+        let bytes: [UInt8] = [UInt8](frame.prefix(16))
+        guard bytes.count >= 5, bytes[0] == 0xFF, bytes[1] & 0xFE == 0xF8 else { return nil }
+        let code: Int = Int(bytes[2] >> 4)
+        switch code {
+        case 1:
+            return 192
+        case 2...5:
+            return 576 << (code - 2)
+        case 8...15:
+            return 256 << (code - 8)
+        case 6, 7:
+            // UTF-8 のように書かれたフレーム番号のあとに、ブロックの大きさ - 1 がある
+            let lead: Int = Int(bytes[4])
+            var length: Int = 1
+            if lead & 0x80 != 0 {
+                var mask: Int = 0x40
+                while lead & mask != 0 && length < 7 {
+                    length += 1
+                    mask >>= 1
+                }
+            }
+            let at: Int = 4 + length
+            if code == 6 {
+                guard at < bytes.count else { return nil }
+                return Int(bytes[at]) + 1
+            }
+            guard at + 1 < bytes.count else { return nil }
+            let high: Int = Int(bytes[at])
+            let low: Int = Int(bytes[at + 1])
+            return ((high << 8) | low) + 1
+        default:
+            return nil
+        }
+    }
+
+    /// "fLaC" で始まる見出しの STREAMINFO の全体のサンプル数（0 は不明）。
+    static func totalSamples(_ header: Data) -> Int? {
+        let bytes: [UInt8] = [UInt8](header.prefix(26))
+        guard bytes.count >= 26, Data(bytes[0..<4]) == Data("fLaC".utf8), bytes[4] & 0x7F == 0 else { return nil }
+        let top: Int = Int(bytes[21] & 0x0F)
+        var total: Int = top
+        for i in 22..<26 {
+            total = (total << 8) | Int(bytes[i])
+        }
+        return total
+    }
+
+    /// STREAMINFO の全体のサンプル数を書き直した見出し（大きさは変わらない）。
+    static func withTotalSamples(_ header: Data, _ total: Int) -> Data {
+        guard totalSamples(header) != nil else { return header }
+        var bytes: [UInt8] = [UInt8](header)
+        let high: Int = (total >> 32) & 0x0F
+        bytes[21] = (bytes[21] & 0xF0) | UInt8(truncatingIfNeeded: high)
+        bytes[22] = UInt8(truncatingIfNeeded: total >> 24)
+        bytes[23] = UInt8(truncatingIfNeeded: total >> 16)
+        bytes[24] = UInt8(truncatingIfNeeded: total >> 8)
+        bytes[25] = UInt8(truncatingIfNeeded: total)
+        return Data(bytes)
+    }
+}

@@ -65,6 +65,22 @@ final class OggTests: XCTestCase {
         }
     }
 
+    /// Ogg の FLAC は全体のサンプル数が 0（不明）。フレームの見出しから数えて書き直せる。
+    func testFLACSampleCountIsRepaired() throws {
+        let demuxer: ForeignDemuxer = try ForeignContainer.open(url: try fixture("tone-flac.oga"))
+        let track: ForeignTrack = try XCTUnwrap(demuxer.tracks.first)
+        XCTAssertEqual(FLACInfo.totalSamples(track.codecPrivate), 0, "Ogg の STREAMINFO は数が不明")
+        var total: Int = 0
+        for packet in try packets(demuxer) {
+            total += try XCTUnwrap(FLACInfo.blockSize(packet.data))
+        }
+        XCTAssertEqual(total, 44_100, "1 秒・44.1kHz")
+        let repaired: Data = FLACInfo.withTotalSamples(track.codecPrivate, total)
+        XCTAssertEqual(repaired.count, track.codecPrivate.count)
+        XCTAssertEqual(FLACInfo.totalSamples(repaired), 44_100)
+        XCTAssertNil(FLACInfo.blockSize(Data([0x12, 0x34, 0x56, 0x78, 0x9A])))
+    }
+
     func testFormatTablesKnowOgg() {
         XCTAssertEqual(MediaFormatSupport.kind(forExtension: "opus"), .audio)
         XCTAssertEqual(MediaFormatSupport.kind(forExtension: "ogg"), .audio)
