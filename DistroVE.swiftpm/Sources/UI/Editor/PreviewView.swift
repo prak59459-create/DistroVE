@@ -154,17 +154,27 @@ struct SelectionOutline: View {
             case .stretch: return canvas.size
             }
             return CGSize(width: w * s, height: h * s)
+        // ?? と min・max と型の変換を 1 つの式に並べると型の確認が重くなるので、1 つずつ分ける
         case .text, .sticker:
-            let size: CGFloat = CGFloat(clip.text?.size ?? 0.07) * canvas.height
-            let count: CGFloat = CGFloat(min(16, max(2, clip.text?.string.count ?? 4)))
+            let relative: Double = clip.text?.size ?? 0.07
+            let characters: Int = clip.text?.string.count ?? 4
+            let clamped: Int = min(16, max(2, characters))
+            let size: CGFloat = CGFloat(relative) * canvas.height
+            let count: CGFloat = CGFloat(clamped)
             return CGSize(width: min(canvas.width * 0.9, size * count * 0.9), height: size * 1.4)
         case .shape:
-            let h: CGFloat = CGFloat(clip.shape?.size ?? 0.3) * min(canvas.width, canvas.height)
-            return CGSize(width: h * CGFloat(clip.shape?.aspect ?? 1), height: h)
+            let relative: Double = clip.shape?.size ?? 0.3
+            let ratio: Double = clip.shape?.aspect ?? 1
+            let h: CGFloat = CGFloat(relative) * min(canvas.width, canvas.height)
+            return CGSize(width: h * CGFloat(ratio), height: h)
         case .object3D:
-            let h: CGFloat = CGFloat(clip.object3D?.size ?? 0.3) * canvas.height
-            let letters: CGFloat = CGFloat(min(10, max(1, clip.object3D?.text.count ?? 1)))
-            let aspect: CGFloat = clip.object3D?.kind == .text ? letters * 0.6 : 1
+            let relative: Double = clip.object3D?.size ?? 0.3
+            let characters: Int = clip.object3D?.text.count ?? 1
+            let clamped: Int = min(10, max(1, characters))
+            let h: CGFloat = CGFloat(relative) * canvas.height
+            let letters: CGFloat = CGFloat(clamped)
+            let isText: Bool = clip.object3D?.kind == .text
+            let aspect: CGFloat = isText ? letters * 0.6 : 1
             return CGSize(width: min(canvas.width, h * aspect), height: h)
         default:
             return canvas.size
