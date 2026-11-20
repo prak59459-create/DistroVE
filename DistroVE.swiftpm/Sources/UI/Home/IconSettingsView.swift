@@ -15,6 +15,7 @@ struct IconSettingsView: View {
     @ObservedObject private var store: IconStore = IconStore.shared
     @State private var style: IconStyle = .proLine
     @State private var sheetIndex: Int = 0
+    @State private var layout: IconSheetLayout = .six
     @State private var importMode: ImportMode = .files
     @State private var showImporter: Bool = false
     @State private var sheetPhoto: PhotosPickerItem?
@@ -145,17 +146,23 @@ struct IconSettingsView: View {
 
     private var sheetSection: some View {
         Section {
+            Picker("まとめ方", selection: Binding<IconSheetLayout>(get: { layout }, set: { value in
+                layout = value
+                sheetIndex = 0
+            })) {
+                ForEach(IconSheetLayout.allCases, id: \.self) { l in Text(l.title).tag(l) }
+            }
             Picker("シート", selection: $sheetIndex) {
-                ForEach(0..<IconCatalog.sheets.count, id: \.self) { i in
-                    Text(IconSettingsView.sheetTitle(i)).tag(i)
+                ForEach(0..<IconCatalog.sheets(layout).count, id: \.self) { i in
+                    Text(IconSettingsView.sheetLabel(i, layout: layout)).tag(i)
                 }
             }
             sheetPreview
             Button {
-                copy(IconPrompt.sheet(sheetIndex, style: style), "シート \(sheetIndex + 1) のプロンプトをコピーしました")
+                copy(IconPrompt.sheet(sheetIndex, style: style, layout: layout), "シート \(sheetIndex + 1) のプロンプトをコピーしました")
             } label: { DVLabel("2. このシートのプロンプトをコピー", icon: "project.duplicate") }
             Button {
-                copy(IconPrompt.slicing(sheetIndex), "切り分けの依頼をコピーしました")
+                copy(IconPrompt.slicing(sheetIndex, layout: layout), "切り分けの依頼をコピーしました")
             } label: { DVLabel("（ZIP でほしいとき）切り分けの依頼をコピー", icon: "edit.split") }
             Button {
                 importMode = .sheet
@@ -165,15 +172,22 @@ struct IconSettingsView: View {
                 DVLabel("3. できた画像を写真から取り込む", icon: "media.photos")
             }
         } header: {
-            Text("シート（4×4 の 1 枚の画像）から切り出す")
+            Text("シート（並べて作った 1 枚の画像）から切り出す")
         } footer: {
-            Text("全部で \(IconCatalog.sheets.count) 枚。切り出すとき、並んでいる順に名前を付けます。")
+            Text("全部で \(IconCatalog.sheets(layout).count) 枚（1 枚に \(layout.columns) 列 × \(layout.rows) 行）。切り出すとき、並んでいる順に名前を付けます。1 枚に 48 個だと順番を間違えることがあるので、取り込んだら下の一覧で確かめてください。")
         }
     }
 
+    static func sheetLabel(_ index: Int, layout: IconSheetLayout) -> String {
+        let title: String = IconCatalog.sheetTitle(index, layout: layout)
+        return "\(index + 1)：\(title)"
+    }
+
     private var sheetPreview: some View {
-        let slots: [IconSlot] = IconCatalog.sheets[sheetIndex]
-        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
+        let all: [[IconSlot]] = IconCatalog.sheets(layout)
+        let slots: [IconSlot] = sheetIndex < all.count ? all[sheetIndex] : []
+        let columns: [GridItem] = Array(repeating: GridItem(.flexible(), spacing: 4), count: layout.columns)
+        return LazyVGrid(columns: columns, spacing: 6) {
             ForEach(slots, id: \.id) { slot in
                 VStack(spacing: 3) {
                     DVImage(slot.id)
@@ -186,14 +200,6 @@ struct IconSettingsView: View {
             }
         }
         .padding(.vertical, 4)
-    }
-
-    static func sheetTitle(_ index: Int) -> String {
-        var names: [String] = []
-        for slot in IconCatalog.sheets[index] where !names.contains(slot.group.title) {
-            names.append(slot.group.title)
-        }
-        return "シート \(index + 1)：" + names.joined(separator: "・")
     }
 
     private var importSection: some View {
@@ -266,6 +272,7 @@ struct IconSettingsView: View {
         guard case .success(let urls) = result, !urls.isEmpty else { return }
         let mode: ImportMode = importMode
         let index: Int = sheetIndex
+        let chosen: IconSheetLayout = layout
         let target: IconSlot? = singleTarget
         busy = true
         Task {
@@ -280,7 +287,7 @@ struct IconSettingsView: View {
                 if access { url.stopAccessingSecurityScopedResource() }
                 if let bytes = data {
                     if mode == .sheet {
-                        made = await store.importSheet(bytes, index: index)
+                        made = await store.importSheet(bytes, index: index, layout: chosen)
                     } else if let slot = target {
                         made = await store.importSingle(bytes, id: slot.id)
                     }
@@ -296,13 +303,14 @@ struct IconSettingsView: View {
     private func loadPhoto(_ item: PhotosPickerItem?, forSheet: Bool) {
         guard let picked = item else { return }
         let index: Int = sheetIndex
+        let chosen: IconSheetLayout = layout
         let target: IconSlot? = singleTarget
         busy = true
         Task {
             var made = IconImportReport()
             if let data = try? await picked.loadTransferable(type: Data.self) {
                 if forSheet {
-                    made = await store.importSheet(data, index: index)
+                    made = await store.importSheet(data, index: index, layout: chosen)
                 } else if let slot = target {
                     made = await store.importSingle(data, id: slot.id)
                 }

@@ -43,17 +43,30 @@ final class IconCatalogTests: XCTestCase {
     }
 
     func testSheetsCoverEveryIconOnce() {
-        var seen = Set<String>()
-        for sheet in IconCatalog.sheets {
-            XCTAssertLessThanOrEqual(sheet.count, IconCatalog.sheetSize)
-            XCTAssertFalse(sheet.isEmpty)
-            for slot in sheet {
-                XCTAssertTrue(seen.insert(slot.id).inserted, slot.id)
-                XCTAssertEqual(slot.shape, .square, slot.id)
+        for layout in IconSheetLayout.allCases {
+            var seen = Set<String>()
+            for sheet in IconCatalog.sheets(layout) {
+                XCTAssertLessThanOrEqual(sheet.count, layout.capacity, layout.rawValue)
+                XCTAssertFalse(sheet.isEmpty, layout.rawValue)
+                for slot in sheet {
+                    XCTAssertTrue(seen.insert(slot.id).inserted, slot.id)
+                    XCTAssertEqual(slot.shape, .square, slot.id)
+                }
+            }
+            XCTAssertEqual(seen.count, IconCatalog.sheetSlots.count, layout.rawValue)
+        }
+        // まとめると、ちょうど 6 枚。増えて 7 枚目ができたら sixSheetGroups を見直す
+        XCTAssertEqual(IconCatalog.sheets(.six).count, 6)
+        for (index, groups) in IconCatalog.sixSheetGroups.enumerated() {
+            for slot in IconCatalog.sheets(.six)[index] {
+                XCTAssertTrue(groups.contains(slot.group), "画像 \(index + 1) に \(slot.id)")
             }
         }
-        let squares: [IconSlot] = IconCatalog.all.filter { $0.group != .brand }
-        XCTAssertEqual(seen.count, squares.count)
+        // 別に作るのは、アプリのアイコン・ロゴ・背景の 3 枚だけ
+        let separate: [String] = IconCatalog.all.filter { $0.shape != .square }.map { $0.id }.sorted()
+        XCTAssertEqual(separate, ["app.icon", "brand.background", "brand.logo"])
+        XCTAssertEqual(IconCatalog.sheetTitle(0, layout: .six), "ホーム・プロジェクト・下の道具バー・書き出し")
+        XCTAssertEqual(IconCatalog.sheetTitle(99, layout: .six), "")
     }
 
     func testFileNamesFromImageToolsAreRecognised() {
@@ -208,6 +221,44 @@ final class IconImageTests: XCTestCase {
         }
         XCTAssertEqual(IconImageProcessor.cuts(mass: [0, 5, 5, 0, 0, 5, 5, 0], parts: 2), [0, 4, 8])
     }
+
+    func testSixSheetIsSlicedIntoEightColumnsAndSixRows() throws {
+        // 1536×1024 を 1/4 にした大きさ（マスの高さは割り切れない 42.67）。マスごとに幅を変えて、順番を確かめる
+        let layout: IconSheetLayout = .six
+        let width: Int = layout.width / 4
+        let height: Int = layout.height / 4
+        var b = IconBitmap(width: width, height: height)
+        for i in 0..<(width * height) {
+            b.pixels[i * 4] = 255
+            b.pixels[i * 4 + 1] = 255
+            b.pixels[i * 4 + 2] = 255
+            b.pixels[i * 4 + 3] = 255
+        }
+        let cellWidth: Double = Double(width) / Double(layout.columns)
+        let cellHeight: Double = Double(height) / Double(layout.rows)
+        for cell in 0..<layout.capacity {
+            let column: Int = cell % layout.columns
+            let row: Int = cell / layout.columns
+            let markWidth: Int = 6 + cell % 20
+            let left: Int = Int(Double(column) * cellWidth) + 8 + (cell % 3)
+            let top: Int = Int(Double(row) * cellHeight) + 10
+            for y in top..<(top + 20) {
+                for x in left..<(left + markWidth) {
+                    let p: Int = (y * width + x) * 4
+                    b.pixels[p] = 0
+                    b.pixels[p + 1] = 0
+                    b.pixels[p + 2] = 0
+                }
+            }
+        }
+        let cells: [IconBitmap] = IconImageProcessor.slice(b, rows: layout.rows, columns: layout.columns)
+        XCTAssertEqual(cells.count, 48)
+        for (i, cell) in cells.enumerated() {
+            let box = try XCTUnwrap(IconImageProcessor.bounds(cell), "マス \(i)")
+            XCTAssertEqual(box.x1 - box.x0, 6 + i % 20, "マス \(i)")
+            XCTAssertEqual(box.y1 - box.y0, 20, "マス \(i)")
+        }
+    }
 }
 
 
@@ -222,22 +273,31 @@ final class IconPromptTests: XCTestCase {
         for style in IconStyle.allCases {
             let guide: String = IconPrompt.styleGuide(style)
             XCTAssertTrue(guide.contains("transparent"), style.rawValue)
-            XCTAssertTrue(guide.contains("4x4"), style.rawValue)
+            XCTAssertTrue(guide.contains("columns"), style.rawValue)
         }
-        for (index, sheet) in IconCatalog.sheets.enumerated() {
-            let text: String = IconPrompt.sheet(index, style: .neon)
-            var cursor: String.Index = text.startIndex
-            for slot in sheet {
-                // 順番どおりに並んでいる
-                guard let found = text.range(of: "[\(slot.id)]", range: cursor..<text.endIndex) else {
-                    XCTFail("シート \(index + 1) に \(slot.id) が無い")
-                    continue
+        for layout in IconSheetLayout.allCases {
+            let sheets: [[IconSlot]] = IconCatalog.sheets(layout)
+            for (index, sheet) in sheets.enumerated() {
+                let text: String = IconPrompt.sheet(index, style: .neon, layout: layout)
+                XCTAssertTrue(text.contains("\(layout.width)x\(layout.height)"), layout.rawValue)
+                XCTAssertTrue(text.contains("\(layout.columns) columns × \(layout.rows) rows"), layout.rawValue)
+                var cursor: String.Index = text.startIndex
+                for slot in sheet {
+                    // 順番どおりに並んでいる
+                    guard let found = text.range(of: "[\(slot.id)]", range: cursor..<text.endIndex) else {
+                        XCTFail("\(layout.rawValue) シート \(index + 1) に \(slot.id) が無い")
+                        continue
+                    }
+                    cursor = found.upperBound
                 }
-                cursor = found.upperBound
+                let empty: Int = layout.capacity - sheet.count
+                XCTAssertEqual(text.contains("Leave the last \(empty) cell"), empty > 0, "\(layout.rawValue) \(index + 1)")
+                let slicing: String = IconPrompt.slicing(index, layout: layout)
+                XCTAssertTrue(slicing.contains(sheet[0].fileName))
+                XCTAssertTrue(slicing.contains(sheet[sheet.count - 1].fileName))
             }
-            XCTAssertTrue(IconPrompt.slicing(index).contains(sheet[0].fileName))
+            XCTAssertEqual(IconPrompt.sheet(sheets.count, style: .proLine, layout: layout), "")
         }
-        XCTAssertEqual(IconPrompt.sheet(IconCatalog.sheets.count, style: .proLine), "")
         XCTAssertTrue(IconPrompt.appIcon(.glass3D).contains("1024x1024"))
     }
 

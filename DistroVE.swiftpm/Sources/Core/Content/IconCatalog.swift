@@ -47,6 +47,27 @@ enum IconGroup: String, CaseIterable, Sendable {
     }
 }
 
+/// 1 枚の画像に何個並べて作るか。
+enum IconSheetLayout: String, CaseIterable, Sendable {
+    /// 6 枚にまとめる（横長 1536×1024 に 8 列 × 6 行）
+    case six
+    /// 細かく作る（正方形 1024×1024 に 4 列 × 4 行。1 つずつがきれいに出やすい）
+    case detailed
+
+    var columns: Int { return self == .six ? 8 : 4 }
+    var rows: Int { return self == .six ? 6 : 4 }
+    var capacity: Int { return columns * rows }
+    var width: Int { return self == .six ? 1536 : 1024 }
+    var height: Int { return 1024 }
+
+    var title: String {
+        switch self {
+        case .six: return "6 枚にまとめる（1 枚に 48 個）"
+        case .detailed: return "細かく作る（1 枚に 16 個）"
+        }
+    }
+}
+
 /// 絵の形（アイコンは正方形、ロゴや背景は形が違う）。
 enum IconShape: String, Sendable {
     case square
@@ -158,22 +179,70 @@ enum IconCatalog {
         return all.filter { $0.group == group }
     }
 
-    /// ChatGPT で 1 枚の画像に 4×4 で並べて作る単位。同じ分類はなるべく同じシートに入れる（絵柄がそろうように）。
-    static let sheetSize: Int = 16
+    /// 1 枚の画像に並べて作る絵（アイコンと、正方形のイラスト）。ロゴ・背景・アプリのアイコンは形が違うので 1 枚ずつ作る。
+    static var sheetSlots: [IconSlot] {
+        return all.filter { $0.shape == .square }
+    }
 
-    static let sheets: [[IconSlot]] = {
+    /// まとめて作るときの 6 枚の組み合わせ（似た分類を同じ画像に入れて、絵柄をそろえる）。どれも 8 列 × 6 行の 48 個に収まる。
+    static let sixSheetGroups: [[IconGroup]] = [
+        [.home, .tools, .export],
+        [.editing, .playback, .timeline],
+        [.media, .text, .ai],
+        [.effects, .transitions, .animations],
+        [.shapes, .object3D, .brand],
+        [.blend, .audio, .speed, .status]
+    ]
+
+    private static let sixSheets: [[IconSlot]] = {
+        var result: [[IconSlot]] = []
+        let capacity: Int = IconSheetLayout.six.capacity
+        for groups in sixSheetGroups {
+            var sheet: [IconSlot] = []
+            for group in groups {
+                for slot in slots(in: group) where slot.shape == .square {
+                    sheet.append(slot)
+                }
+            }
+            // 増えて入りきらなくなったら、あふれたぶんを次の画像にする（一覧のテストで気づけるようにする）
+            while sheet.count > capacity {
+                result.append(Array(sheet.prefix(capacity)))
+                sheet = Array(sheet.dropFirst(capacity))
+            }
+            if !sheet.isEmpty { result.append(sheet) }
+        }
+        // 組み合わせに入れ忘れた分類があれば、最後に足す
+        var placed = Set<String>()
+        for sheet in result {
+            for slot in sheet { placed.insert(slot.id) }
+        }
+        let rest: [IconSlot] = sheetSlots.filter { !placed.contains($0.id) }
+        var index: Int = 0
+        while index < rest.count {
+            result.append(Array(rest[index..<min(rest.count, index + capacity)]))
+            index += capacity
+        }
+        return result
+    }()
+
+    /// 細かく作るとき（4×4 の 16 個ずつ）。同じ分類はなるべく同じシートに入れる。
+    private static let detailedSheets: [[IconSlot]] = {
+        let capacity: Int = IconSheetLayout.detailed.capacity
         var result: [[IconSlot]] = []
         var current: [IconSlot] = []
-        for group in IconGroup.allCases where group != .brand {
-            let items: [IconSlot] = slots(in: group)
+        var order: [IconGroup] = []
+        for group in IconGroup.allCases where group != .brand { order.append(group) }
+        order.append(.brand)
+        for group in order {
+            let items: [IconSlot] = slots(in: group).filter { $0.shape == .square }
             // 分類の途中で切れないよう、入りきらなければ新しいシートにする（大きい分類はそのまま分ける）
-            if !current.isEmpty && current.count + items.count > sheetSize && items.count <= sheetSize {
+            if !current.isEmpty && current.count + items.count > capacity && items.count <= capacity {
                 result.append(current)
                 current = []
             }
             for item in items {
                 current.append(item)
-                if current.count == sheetSize {
+                if current.count == capacity {
                     result.append(current)
                     current = []
                 }
@@ -182,6 +251,26 @@ enum IconCatalog {
         if !current.isEmpty { result.append(current) }
         return result
     }()
+
+    static func sheets(_ layout: IconSheetLayout) -> [[IconSlot]] {
+        switch layout {
+        case .six: return sixSheets
+        case .detailed: return detailedSheets
+        }
+    }
+
+    /// シートの見出し（入っている分類の名前）。
+    static func sheetTitle(_ index: Int, layout: IconSheetLayout) -> String {
+        let all: [[IconSlot]] = sheets(layout)
+        guard index >= 0 && index < all.count else { return "" }
+        var names: [String] = []
+        for slot in all[index] {
+            // シートに入るのは正方形の絵だけ（ロゴと背景は別に作る）なので、ブランドは「イラスト」と呼ぶ
+            let name: String = slot.group == .brand ? "イラスト" : slot.group.title
+            if !names.contains(name) { names.append(name) }
+        }
+        return names.joined(separator: "・")
+    }
 
     // MARK: 一覧
 
@@ -494,10 +583,19 @@ enum IconCatalog {
             "rectangle": "rectangle", "roundedRectangle": "app", "ellipse": "circle", "triangle": "triangle",
             "star": "star", "arrow": "arrow.right", "line": "line.diagonal"
         ]
+        let shapePrompts: [String: String] = [
+            "rectangle": "a plain outlined rectangle",
+            "roundedRectangle": "an outlined rectangle with generously rounded corners",
+            "ellipse": "an outlined horizontal oval",
+            "triangle": "an outlined equilateral triangle",
+            "star": "an outlined five-point star",
+            "arrow": "an outlined right-pointing block arrow",
+            "line": "a single diagonal straight line with a round dot at each end"
+        ]
         var list: [IconSlot] = []
         for kind in ShapeKind.allCases {
             list.append(s(kind.iconID, shapeSymbols[kind.rawValue] ?? "square.on.circle", .shapes, "図形：" + kind.label,
-                          "a simple outlined " + kind.rawValue + " shape"))
+                          shapePrompts[kind.rawValue] ?? "a simple outlined shape"))
         }
         let maskSymbols: [String: String] = ["rectangle": "rectangle.dashed", "ellipse": "circle.dashed", "linear": "line.diagonal", "mirror": "rectangle.split.1x2"]
         let maskPrompts: [String: String] = [
@@ -524,18 +622,46 @@ enum IconCatalog {
             "landscape16x9": "rectangle", "portrait9x16": "rectangle.portrait", "square1x1": "square",
             "portrait4x5": "rectangle.portrait", "landscape4x3": "rectangle", "cinema21x9": "rectangle.ratio.16.to.9"
         ]
+        let aspectPrompts: [String: String] = [
+            "landscape16x9": "a wide empty frame in 16:9 proportions with small corner marks",
+            "portrait9x16": "a tall empty frame in 9:16 proportions like a phone screen, with small corner marks",
+            "square1x1": "an empty square frame with small corner marks",
+            "portrait4x5": "a slightly tall empty frame in 4:5 proportions with small corner marks",
+            "landscape4x3": "a classic empty frame in 4:3 proportions with small corner marks",
+            "cinema21x9": "a very wide empty cinema frame in 21:9 proportions with small corner marks"
+        ]
         for aspect in AspectPreset.allCases {
             list.append(s(aspect.iconID, aspectSymbols[aspect.rawValue] ?? "aspectratio", .shapes, "画面の形：" + aspect.label,
-                          "an empty frame with the " + aspect.label + " proportion"))
+                          aspectPrompts[aspect.rawValue] ?? "an empty frame with small corner marks"))
         }
         return list
     }
 
     private static func blend() -> [IconSlot] {
+        // どれも「重なった 2 つの円」でそろえ、重なりの中の印で見分ける
+        let prompts: [String: String] = [
+            "normal": "two overlapping circles, the front circle opaque and hiding the back one",
+            "multiply": "two overlapping circles with the overlap filled with dense diagonal hatching (darker)",
+            "screen": "two overlapping circles with the overlap open and small light rays around it (lighter)",
+            "overlay": "two overlapping circles with the overlap split into a hatched half and an open half (contrast)",
+            "darken": "two overlapping circles with a small down arrow inside the overlap",
+            "lighten": "two overlapping circles with a small up arrow inside the overlap",
+            "colorDodge": "two overlapping circles with a tiny sun burst inside the overlap",
+            "colorBurn": "two overlapping circles with a tiny flame inside the overlap",
+            "softLight": "two overlapping circles with a soft dotted overlap",
+            "hardLight": "two overlapping circles with a small sharp lightning bolt inside the overlap",
+            "difference": "two overlapping circles with a minus sign inside the overlap",
+            "exclusion": "two overlapping circles with the overlap cut out and left empty",
+            "add": "two overlapping circles with a plus sign inside the overlap",
+            "hue": "two overlapping circles with a tiny segmented colour wheel inside the overlap",
+            "saturation": "two overlapping circles with a tiny three-step intensity bar inside the overlap",
+            "color": "two overlapping circles with a tiny paint drop inside the overlap",
+            "luminosity": "two overlapping circles with a tiny half-solid, half-open dot inside the overlap"
+        ]
         var list: [IconSlot] = []
         for mode in LayerBlend.allCases {
             list.append(s(mode.iconID, "square.stack.3d.down.right", .blend, "ブレンド：" + mode.label,
-                          "two overlapping circles showing the '" + mode.rawValue + "' blend mode"))
+                          prompts[mode.rawValue] ?? "two overlapping circles"))
         }
         return list
     }
@@ -557,17 +683,33 @@ enum IconCatalog {
         let lightSymbols: [String: String] = [
             "studio": "light.max", "soft": "cloud.sun", "dramatic": "theatermasks", "sunset": "sunset", "neon": "lightbulb", "backlit": "sun.horizon"
         ]
+        let lightPrompts: [String: String] = [
+            "studio": "a sphere lit by two small softbox panels from the upper left and upper right",
+            "soft": "a sphere with a wide soft highlight and a small cloud above it",
+            "dramatic": "a sphere lit hard from one side, the other half in hatched shadow",
+            "sunset": "a sphere lit low from the side by a half sun on a horizon line",
+            "neon": "a sphere inside a glowing ring-shaped tube light",
+            "backlit": "a sphere with a light source behind it and a bright rim around its edge"
+        ]
         for light in Lighting3D.allCases {
             list.append(s(light.iconID, lightSymbols[light.rawValue] ?? "lightbulb", .object3D, "照明：" + light.label,
-                          "a sphere lit with '" + light.rawValue + "' lighting"))
+                          lightPrompts[light.rawValue] ?? "a lit sphere"))
         }
         let motionSymbols: [String: String] = [
             "none": "nosign", "spin": "arrow.triangle.2.circlepath", "flip": "arrow.up.arrow.down", "swing": "arrow.left.and.right",
             "float": "cloud", "tumble": "arrow.3.trianglepath"
         ]
+        let motionPrompts: [String: String] = [
+            "none": "a still cube with a small slash circle (no motion)",
+            "spin": "a cube with a circular arrow around its vertical axis",
+            "flip": "a cube with a curved arrow flipping it over its horizontal axis",
+            "swing": "a cube hanging from a pivot point with a curved arrow swinging left and right",
+            "float": "a cube hovering above a short shadow line with small up and down arrows",
+            "tumble": "a tilted cube with two crossing curved arrows, rolling in several directions"
+        ]
         for motion in Motion3D.allCases {
             list.append(s(motion.iconID, motionSymbols[motion.rawValue] ?? "rotate.3d", .object3D, "3D の動き：" + motion.label,
-                          "a cube showing the '" + motion.rawValue + "' motion with arrows"))
+                          motionPrompts[motion.rawValue] ?? "a moving cube with arrows"))
         }
         return list
     }

@@ -133,11 +133,11 @@ final class IconStore: ObservableObject {
         return result.report
     }
 
-    /// 4×4 に並べた 1 枚の画像（シート）を切り分けて取り込む。index はシートの番号（0 から）。
-    func importSheet(_ data: Data, index: Int) async -> ImportReport {
+    /// 並べて作った 1 枚の画像（シート）を切り分けて取り込む。index はシートの番号（0 から）。
+    func importSheet(_ data: Data, index: Int, layout: IconSheetLayout) async -> ImportReport {
         let folder: URL = IconStore.folder
         let result: (report: ImportReport, flags: [String: Bool]) = await Task.detached(priority: .userInitiated) {
-            return IconImporter.importSheet(data, index: index, into: folder)
+            return IconImporter.importSheet(data, index: index, layout: layout, into: folder)
         }.value
         apply(result.flags)
         return result.report
@@ -217,16 +217,16 @@ enum IconImporter {
         return (report, flags)
     }
 
-    static func importSheet(_ data: Data, index: Int, into folder: URL) -> (report: IconImportReport, flags: [String: Bool]) {
+    static func importSheet(_ data: Data, index: Int, layout: IconSheetLayout,
+                            into folder: URL) -> (report: IconImportReport, flags: [String: Bool]) {
         var report = IconImportReport()
         var flags: [String: Bool] = [:]
-        let sheets: [[IconSlot]] = IconCatalog.sheets
+        let sheets: [[IconSlot]] = IconCatalog.sheets(layout)
         guard index >= 0 && index < sheets.count, let cg = decode(data, maxSide: 2048), let sheet = bitmap(from: cg, maxSide: 2048) else {
             report.failed.append("シート \(index + 1)")
             return (report, flags)
         }
-        let side: Int = Int(Double(IconCatalog.sheetSize).squareRoot().rounded())
-        let cells: [IconBitmap] = IconImageProcessor.slice(sheet, rows: side, columns: side)
+        let cells: [IconBitmap] = IconImageProcessor.slice(sheet, rows: layout.rows, columns: layout.columns)
         for (position, slot) in sheets[index].enumerated() where position < cells.count {
             guard let result = IconImageProcessor.process(cells[position]), let png = pngData(result.bitmap) else {
                 report.failed.append(slot.title)

@@ -82,13 +82,13 @@ enum IconPrompt {
         - No letters or words, except when the concept itself is a letter (for example the letter "A" for text tools).
 
         GRID AND COMPOSITION
-        - Each icon is centred in its own square cell (the whole image for a single icon) with an even 8% padding on every side; the artwork fills the remaining square optically (circles slightly larger than squares).
+        - Each icon is centred in its own cell (the whole image for a single icon), inside an invisible square as large as the cell's shorter side, with an even 8% padding on every side of that square; the artwork fills the square optically (circles slightly larger than squares). Never stretch an icon to the cell's shape.
         - Same line weight, corner radius, perspective and level of detail across all icons. Reuse a shared visual vocabulary: a "clip/frame" is a rounded rectangle, a "timeline" is a horizontal line with a small playhead, "AI" is a four-point sparkle.
         - Must stay readable at 20 px; avoid hairline details and tiny gaps.
 
         OUTPUT
         - PNG with a truly transparent background (alpha), sRGB. Never draw a background colour, tile, card, circle plate or frame behind an icon.
-        - For a sheet: one 1024x1024 image with an exact 4x4 grid of equal cells, icons in the given order, left to right, top to bottom; empty cells stay empty; no grid lines, no numbers, no captions.
+        - For a sheet: exactly the image size and the columns × rows of equal cells given in the sheet message. One icon per cell, in the given order (row by row, left to right). Every icon stays fully inside its own cell with clear empty space between neighbouring cells, all at the same size. Empty cells stay empty. No grid lines, no numbers, no captions.
         - For a single icon: one 1024x1024 image with only that icon.
 
         NEVER
@@ -100,19 +100,31 @@ enum IconPrompt {
         """
     }
 
-    /// シート（4×4）1 枚ぶん。index は 0 から。
-    static func sheet(_ index: Int, style: IconStyle) -> String {
-        let sheets: [[IconSlot]] = IconCatalog.sheets
+    /// シート 1 枚ぶん。index は 0 から。6 枚にまとめるときは 1 行ずつ並べて書く（48 個でも順番を間違えにくいように）。
+    static func sheet(_ index: Int, style: IconStyle, layout: IconSheetLayout = .six) -> String {
+        let sheets: [[IconSlot]] = IconCatalog.sheets(layout)
         guard index >= 0 && index < sheets.count else { return "" }
+        let slots: [IconSlot] = sheets[index]
+        let cellWidth: Int = layout.width / layout.columns
+        let cellHeight: Int = layout.height / layout.rows
         var lines: [String] = []
-        lines.append("Sheet \(index + 1) of \(sheets.count) — one 1024x1024 transparent PNG, 4x4 grid, \(sheets[index].count) icons in this exact order (left to right, top to bottom):")
-        for (position, slot) in sheets[index].enumerated() {
-            lines.append("\(position + 1). [\(slot.id)] \(slot.prompt)")
+        lines.append("Sheet \(index + 1) of \(sheets.count) — one \(layout.width)x\(layout.height) PNG with a transparent background, an exact grid of \(layout.columns) columns × \(layout.rows) rows of equal cells (each about \(cellWidth)×\(cellHeight) px). \(slots.count) icons in this exact order:")
+        var row: Int = 0
+        while row * layout.columns < slots.count {
+            let start: Int = row * layout.columns
+            let end: Int = min(slots.count, start + layout.columns)
+            var cells: [String] = []
+            for position in start..<end {
+                cells.append("\(position + 1) [\(slots[position].id)] \(slots[position].prompt)")
+            }
+            lines.append("Row \(row + 1): " + cells.joined(separator: " · "))
+            row += 1
         }
-        if sheets[index].count < IconCatalog.sheetSize {
-            lines.append("Leave the remaining \(IconCatalog.sheetSize - sheets[index].count) cells at the end empty.")
+        let empty: Int = layout.capacity - slots.count
+        if empty > 0 {
+            lines.append("Leave the last \(empty) cell\(empty == 1 ? "" : "s") empty.")
         }
-        lines.append("Keep exactly the same style as the previous sheets (\(style.rawValue)). Do not draw the bracketed names.")
+        lines.append("Same style as the previous sheets (\(style.rawValue)). Do not draw the numbers or the bracketed names.")
         return lines.joined(separator: "\n")
     }
 
@@ -122,12 +134,12 @@ enum IconPrompt {
     }
 
     /// ChatGPT（コード実行）にシートを切り分けてもらうとき（アプリの「シートから切り出す」でもできる）。
-    static func slicing(_ index: Int) -> String {
-        let sheets: [[IconSlot]] = IconCatalog.sheets
+    static func slicing(_ index: Int, layout: IconSheetLayout = .six) -> String {
+        let sheets: [[IconSlot]] = IconCatalog.sheets(layout)
         guard index >= 0 && index < sheets.count else { return "" }
         let names: String = sheets[index].map { $0.fileName }.joined(separator: ", ")
         return """
-        Use Python on the sheet image you just made: split it into its 4x4 cells, remove any remaining background so it is transparent, trim empty margins, centre each icon on a 512x512 transparent canvas with 8% padding, and save the cells in reading order with these exact file names: \(names). Then give me one ZIP file named distrove-icons-sheet-\(index + 1).zip.
+        Use Python on the sheet image you just made: split it into its \(layout.columns) columns × \(layout.rows) rows of cells, remove any remaining background so it is transparent, trim empty margins, centre each icon on a 512x512 transparent canvas with 8% padding, and save the cells in reading order (row by row) with these exact file names: \(names). Skip empty cells. Then give me one ZIP file named distrove-icons-sheet-\(index + 1).zip.
         """
     }
 
@@ -170,9 +182,10 @@ enum IconPrompt {
         out.append("## 1. 流れ（いちばん早い方法）")
         out.append("")
         out.append("1. ChatGPT で新しいチャットを開き、下の「2. 全体の決まり」から好きな絵柄の 1 つを貼って送る（「Ready」と返ってくる）。")
-        out.append("2. 「3. シート」の **シート 1** を貼って送る → 4×4 に並んだ 1 枚の画像ができる。絵柄が気に入らなければ、ここで直してもらう（例：「線をもう少し太く」）。")
-        out.append("3. 同じチャットのまま、シート 2、3……と順に送る（同じチャットだと絵柄がそろう）。")
-        out.append("4. できた画像を iPad に保存し、アプリの **設定 > アイコン > シートから切り出す** で、シートの番号を選んで取り込む。名前は自動で付きます。")
+        out.append("2. 「3. 6 枚の画像」の **画像 1** を貼って送る → 48 個が並んだ横長の 1 枚ができる。絵柄が気に入らなければ、ここで直してもらう（例：「線をもう少し太く」）。")
+        out.append("3. 同じチャットのまま、画像 2〜6 を順に送る（同じチャットだと絵柄がそろう）。全部で 6 枚で、アプリの中の絵 \(IconCatalog.sheetSlots.count) か所がそろいます。")
+        out.append("4. できた画像を iPad に保存し、アプリの **設定 > アイコン > シートから切り出す** で「6 枚にまとめる」と画像の番号を選んで取り込む。名前は自動で付きます。")
+        out.append("   - 1 枚に 48 個は、絵の数や順番を間違えることがあります。取り込んだあとアプリの一覧で確かめ、違う所は 1 つずつ作り直すか、その画像だけ「細かく作る（1 枚に 16 個）」で作り直してください（アプリの設定画面からプロンプトをコピーできます）。")
         out.append("   - または、ChatGPT に「4. 切り分けの依頼」を送ると、名前の付いた PNG を ZIP でくれます。ZIP は「ファイル」アプリでタップして展開し、**設定 > アイコン > 画像を取り込む** でフォルダーごと選びます。")
         out.append("5. アプリのアイコンは「5. アプリのアイコン」で作り、Swift Playgrounds の **App Settings > App Icon** で選ぶ。")
         out.append("")
@@ -192,28 +205,27 @@ enum IconPrompt {
             out.append("```")
         }
         out.append("")
-        out.append("## 3. シート（4×4 で 1 枚ずつ）")
+        out.append("## 3. 6 枚の画像（1 枚に 8 列 × 6 行の 48 個）")
         out.append("")
-        out.append("全部で \(IconCatalog.sheets.count) 枚です。`[ ]` の中がファイル名（拡張子なし）で、アプリの「シートから切り出す」はこの順番で名前を付けます。下の例はプロ・ラインのとき。ほかの絵柄では最後の行の `(proLine)` を選んだ絵柄の名前（`neon` など）に変えます。")
-        for (index, sheet) in IconCatalog.sheets.enumerated() {
-            var groups: [String] = []
-            for slot in sheet where !groups.contains(slot.group.title) {
-                groups.append(slot.group.title)
-            }
+        out.append("`[ ]` の中がファイル名（拡張子なし）で、アプリの「シートから切り出す」はこの順番で名前を付けます。下の例はプロ・ラインのとき。ほかの絵柄では最後の行の `(proLine)` を選んだ絵柄の名前（`neon` など）に変えます。")
+        let six: [[IconSlot]] = IconCatalog.sheets(.six)
+        for index in 0..<six.count {
             out.append("")
-            out.append("### シート \(index + 1)（\(groups.joined(separator: "・"))）")
+            out.append("### 画像 \(index + 1)（\(IconCatalog.sheetTitle(index, layout: .six))、\(six[index].count) 個）")
             out.append("")
             out.append("```text")
-            out.append(IconPrompt.sheet(index, style: .proLine))
+            out.append(IconPrompt.sheet(index, style: .proLine, layout: .six))
             out.append("```")
         }
         out.append("")
+        out.append("1 つずつの絵をもっとはっきりさせたいときは、アプリの **設定 > アイコン** で「細かく作る（1 枚に 16 個）」を選ぶと、\(IconCatalog.sheets(.detailed).count) 枚に分けたプロンプトをコピーできます。")
+        out.append("")
         out.append("## 4. 切り分けの依頼（ChatGPT のコード実行で ZIP にしてもらう）")
         out.append("")
-        out.append("シートを作った直後に送ります（シート 1 の例。番号とファイル名はシートごとに変わります。アプリの「設定 > アイコン」からはシートごとの文をコピーできます）。")
+        out.append("画像を作った直後に送ります（画像 1 の例。番号とファイル名は画像ごとに変わります。アプリの「設定 > アイコン」からは画像ごとの文をコピーできます）。")
         out.append("")
         out.append("```text")
-        out.append(slicing(0))
+        out.append(slicing(0, layout: .six))
         out.append("```")
         out.append("")
         out.append("## 5. アプリのアイコン")
@@ -226,7 +238,7 @@ enum IconPrompt {
         out.append("")
         out.append("## 6. ロゴ・背景・イラスト")
         out.append("")
-        out.append("ホームのロゴと背景、プロジェクトが無いときの絵、はじめに（チュートリアル）の 6 枚、書き出し完了の絵です。1 枚ずつ作り、ファイル名を `[ ]` の中の名前にして取り込みます。")
+        out.append("ホームのロゴと背景は形が違うので、6 枚とは別に 1 枚ずつ作ります（無くてもアプリは動きます）。ファイル名を `[ ]` の中の名前にして取り込みます。はじめに（チュートリアル）の絵・プロジェクトが無いときの絵・書き出し完了の絵は画像 5 に入っています。もっと大きく描き込みたいときは、下の文で 1 枚ずつ作り直せます。")
         for slot in IconCatalog.slots(in: .brand) where slot.shape != .appIcon {
             out.append("")
             out.append("- **\(slot.title)**（`\(slot.fileName)`）")
