@@ -1,6 +1,6 @@
 import Foundation
 
-/// アイコンの分類（設定の一覧と、ChatGPT で作るときのシートの単位）。
+/// アイコンの分類（ChatGPT で作るときに、似た分類を同じ画像に入れる）。
 enum IconGroup: String, CaseIterable, Sendable {
     case brand
     case home
@@ -47,27 +47,6 @@ enum IconGroup: String, CaseIterable, Sendable {
     }
 }
 
-/// 1 枚の画像に何個並べて作るか。
-enum IconSheetLayout: String, CaseIterable, Sendable {
-    /// 6 枚にまとめる（横長 1536×1024 に 8 列 × 6 行）
-    case six
-    /// 細かく作る（正方形 1024×1024 に 4 列 × 4 行。1 つずつがきれいに出やすい）
-    case detailed
-
-    var columns: Int { return self == .six ? 8 : 4 }
-    var rows: Int { return self == .six ? 6 : 4 }
-    var capacity: Int { return columns * rows }
-    var width: Int { return self == .six ? 1536 : 1024 }
-    var height: Int { return 1024 }
-
-    var title: String {
-        switch self {
-        case .six: return "6 枚にまとめる（1 枚に 48 個）"
-        case .detailed: return "細かく作る（1 枚に 16 個）"
-        }
-    }
-}
-
 /// 絵の形（アイコンは正方形、ロゴや背景は形が違う）。
 enum IconShape: String, Sendable {
     case square
@@ -79,14 +58,14 @@ enum IconShape: String, Sendable {
     case appIcon
 }
 
-/// アプリの中の 1 つのアイコンの置き場所。取り込んだ画像（id と同じ名前のファイル）があればそれを、無ければ SF Symbols の fallback を出す。
+/// アプリの中の 1 つのアイコンの置き場所。アプリに入れた絵（Assets.xcassets の assetName）があればそれを、無ければ SF Symbols の fallback を出す。
 struct IconSlot: Hashable, Sendable {
     /// ファイル名（拡張子なし）。例 "edit.split" → edit.split.png
     let id: String
-    /// 取り込んだ画像が無いときの SF Symbols の名前
+    /// 絵が入っていないときの SF Symbols の名前
     let fallback: String
     let group: IconGroup
-    /// 日本語の名前（設定の一覧に出す）
+    /// 日本語の名前（説明書と確認用の一覧に出す）
     let title: String
     /// 画像を作る AI への説明（英語。何を描くか）
     let prompt: String
@@ -127,149 +106,22 @@ enum IconCatalog {
         return map
     }()
 
-    /// ファイル名を比べるための形（大文字小文字・記号の違いを無視する）。
-    private static let byKey: [String: String] = {
-        var map: [String: String] = [:]
-        for slot in all { map[key(slot.id)] = slot.id }
-        return map
-    }()
-
     static func slot(_ id: String) -> IconSlot? {
         return byID[id]
     }
 
-    /// 取り込んだ画像が無いときの SF Symbols（一覧に無い id は、そのまま SF Symbols の名前として扱う）。
+    /// 絵が入っていないときの SF Symbols（一覧に無い id は、そのまま SF Symbols の名前として扱う）。
     static func fallback(for id: String) -> String {
         return byID[id]?.fallback ?? id
     }
 
-    /// 画像のファイル名から id を探す。「01_edit_split@2x.png」「Edit-Split.PNG」なども edit.split とみなす。
-    static func id(forFileName name: String) -> String? {
-        var base: String = name
-        if let dot = base.lastIndex(of: "."), ["png", "jpg", "jpeg", "heic", "webp", "tif", "tiff"].contains(base[base.index(after: dot)...].lowercased()) {
-            base = String(base[..<dot])
-        }
-        for suffix in ["@2x", "@3x", "@1x"] where base.lowercased().hasSuffix(suffix) {
-            base = String(base.dropLast(suffix.count))
-        }
-        // 先頭の番号（01_ や 1- など）
-        var trimmed: Substring = Substring(base)
-        while let first = trimmed.first, first.isNumber { trimmed = trimmed.dropFirst() }
-        if trimmed.count < base.count, let first = trimmed.first, first == "_" || first == "-" || first == " " || first == "." {
-            base = String(trimmed.dropFirst())
-        }
-        if let direct = byID[base] { return direct.id }
-        if let found = byKey[key(base)] { return found }
-        // 「SF Symbols の名前」で作ったファイルも受け付ける（その記号を使う最初の置き場所）
-        for slot in all where key(slot.fallback) == key(base) {
-            return slot.id
-        }
-        return nil
-    }
-
-    static func key(_ text: String) -> String {
-        var result: String = ""
-        for scalar in text.lowercased().unicodeScalars where CharacterSet.alphanumerics.contains(scalar) {
-            result.unicodeScalars.append(scalar)
-        }
-        return result
+    /// Assets.xcassets の中の名前（id の「.」を「_」にする。id は英数字と「.」だけなので重ならない）。scripts/icon_pack.py も同じ名前で書き出す。
+    static func assetName(for id: String) -> String {
+        return id.replacingOccurrences(of: ".", with: "_")
     }
 
     static func slots(in group: IconGroup) -> [IconSlot] {
         return all.filter { $0.group == group }
-    }
-
-    /// 1 枚の画像に並べて作る絵（アイコンと、正方形のイラスト）。ロゴ・背景・アプリのアイコンは形が違うので 1 枚ずつ作る。
-    static var sheetSlots: [IconSlot] {
-        return all.filter { $0.shape == .square }
-    }
-
-    /// まとめて作るときの 6 枚の組み合わせ（似た分類を同じ画像に入れて、絵柄をそろえる）。どれも 8 列 × 6 行の 48 個に収まる。
-    static let sixSheetGroups: [[IconGroup]] = [
-        [.home, .tools, .export],
-        [.editing, .playback, .timeline],
-        [.media, .text, .ai],
-        [.effects, .transitions, .animations],
-        [.shapes, .object3D, .brand],
-        [.blend, .audio, .speed, .status]
-    ]
-
-    private static let sixSheets: [[IconSlot]] = {
-        var result: [[IconSlot]] = []
-        let capacity: Int = IconSheetLayout.six.capacity
-        for groups in sixSheetGroups {
-            var sheet: [IconSlot] = []
-            for group in groups {
-                for slot in slots(in: group) where slot.shape == .square {
-                    sheet.append(slot)
-                }
-            }
-            // 増えて入りきらなくなったら、あふれたぶんを次の画像にする（一覧のテストで気づけるようにする）
-            while sheet.count > capacity {
-                result.append(Array(sheet.prefix(capacity)))
-                sheet = Array(sheet.dropFirst(capacity))
-            }
-            if !sheet.isEmpty { result.append(sheet) }
-        }
-        // 組み合わせに入れ忘れた分類があれば、最後に足す
-        var placed = Set<String>()
-        for sheet in result {
-            for slot in sheet { placed.insert(slot.id) }
-        }
-        let rest: [IconSlot] = sheetSlots.filter { !placed.contains($0.id) }
-        var index: Int = 0
-        while index < rest.count {
-            result.append(Array(rest[index..<min(rest.count, index + capacity)]))
-            index += capacity
-        }
-        return result
-    }()
-
-    /// 細かく作るとき（4×4 の 16 個ずつ）。同じ分類はなるべく同じシートに入れる。
-    private static let detailedSheets: [[IconSlot]] = {
-        let capacity: Int = IconSheetLayout.detailed.capacity
-        var result: [[IconSlot]] = []
-        var current: [IconSlot] = []
-        var order: [IconGroup] = []
-        for group in IconGroup.allCases where group != .brand { order.append(group) }
-        order.append(.brand)
-        for group in order {
-            let items: [IconSlot] = slots(in: group).filter { $0.shape == .square }
-            // 分類の途中で切れないよう、入りきらなければ新しいシートにする（大きい分類はそのまま分ける）
-            if !current.isEmpty && current.count + items.count > capacity && items.count <= capacity {
-                result.append(current)
-                current = []
-            }
-            for item in items {
-                current.append(item)
-                if current.count == capacity {
-                    result.append(current)
-                    current = []
-                }
-            }
-        }
-        if !current.isEmpty { result.append(current) }
-        return result
-    }()
-
-    static func sheets(_ layout: IconSheetLayout) -> [[IconSlot]] {
-        switch layout {
-        case .six: return sixSheets
-        case .detailed: return detailedSheets
-        }
-    }
-
-    /// シートの見出し（入っている分類の名前）。
-    static func sheetTitle(_ index: Int, layout: IconSheetLayout) -> String {
-        let all: [[IconSlot]] = sheets(layout)
-        guard index >= 0 && index < all.count else { return "" }
-        var names: [String] = []
-        for slot in all[index] {
-            // シートに入るのは正方形の絵だけ（ロゴと背景は別に作る）なので、ブランドは「イラスト」と呼ぶ
-            let name: String = slot.group == .brand ? "イラスト" : slot.group.title
-            if !names.contains(name) { names.append(name) }
-        }
-        return names.joined(separator: "・")
     }
 
     // MARK: 一覧

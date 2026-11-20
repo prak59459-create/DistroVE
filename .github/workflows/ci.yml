@@ -24,6 +24,14 @@ jobs:
         run: scripts/measure-core-build.sh
       - name: 配布データ（content/）の一覧が最新か
         run: python3 scripts/update-content-manifest.py --check
+      - name: Python（アイコンの取り込みスクリプト用）
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: アイコンの取り込みスクリプトのテスト
+        run: |
+          python -m pip install --quiet pillow numpy
+          python scripts/test_icon_pack.py
       - name: テスト
         run: swift test
 

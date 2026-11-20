@@ -1,6 +1,7 @@
 import Foundation
+@testable import DistroKit
 
-/// アイコンの絵柄（ChatGPT に渡す決まり）。単色ならアプリが文字の色で塗り、色付きならそのまま出す（取り込むときに自動で見分ける）。
+/// アイコンの絵柄（ChatGPT に渡す決まり）。単色ならアプリが文字の色で塗り、色付きならそのまま出す（scripts/icon_pack.py が見分ける）。
 enum IconStyle: String, CaseIterable, Sendable {
     /// 単色の線（プロ向けの編集アプリの道具バーと同じ。いちばんそろえやすい）
     case proLine
@@ -67,7 +68,7 @@ enum IconStyle: String, CaseIterable, Sendable {
     }
 }
 
-/// ChatGPT（画像生成）でアイコンを作るためのプロンプト。アプリの「設定 > アイコン」と docs/アイコン制作プロンプト.md は同じ文を使う。
+/// 開発者が ChatGPT（画像生成）でアイコンを作るためのプロンプトと、その説明書（docs/アイコン制作プロンプト.md）。アプリには入らない。
 enum IconPrompt {
     /// 最初に 1 回だけ貼る、全体の決まり（役割・絵柄・出力の形・してはいけないこと）。
     static func styleGuide(_ style: IconStyle) -> String {
@@ -133,17 +134,7 @@ enum IconPrompt {
         return "Single icon [\(slot.id)] — \(slot.prompt). One 1024x1024 transparent PNG, centred with 8% padding, exactly the same style as the sheets (\(style.rawValue))."
     }
 
-    /// ChatGPT（コード実行）にシートを切り分けてもらうとき（アプリの「シートから切り出す」でもできる）。
-    static func slicing(_ index: Int, layout: IconSheetLayout = .six) -> String {
-        let sheets: [[IconSlot]] = IconCatalog.sheets(layout)
-        guard index >= 0 && index < sheets.count else { return "" }
-        let names: String = sheets[index].map { $0.fileName }.joined(separator: ", ")
-        return """
-        Use Python on the sheet image you just made: split it into its \(layout.columns) columns × \(layout.rows) rows of cells, remove any remaining background so it is transparent, trim empty margins, centre each icon on a 512x512 transparent canvas with 8% padding, and save the cells in reading order (row by row) with these exact file names: \(names). Skip empty cells. Then give me one ZIP file named distrove-icons-sheet-\(index + 1).zip.
-        """
-    }
-
-    /// アプリのアイコン（Swift Playgrounds の App Settings > App Icon、または Assets の AppIcon）。
+    /// アプリのアイコン（scripts/icon_pack.py が Assets の AppIcon にする）。
     static func appIcon(_ style: IconStyle) -> String {
         return """
         Design the iOS/iPadOS app icon for "Distro VE", an original pro video editor for iPad.
@@ -159,7 +150,7 @@ enum IconPrompt {
     static func brand(_ slot: IconSlot, style: IconStyle) -> String {
         switch slot.shape {
         case .wide:
-            return "[\(slot.id)] \(slot.prompt). One 1536x1024 PNG with a fully transparent background; draw the emblem as one horizontal 3:1 shape across the middle and leave the rest empty (the app trims it). No text, same family as the icons (\(style.rawValue))."
+            return "[\(slot.id)] \(slot.prompt). One 1536x1024 PNG with a fully transparent background; draw the emblem as one horizontal 3:1 shape across the middle and leave the rest empty (the empty space is trimmed afterwards). No text, same family as the icons (\(style.rawValue))."
         case .backdrop:
             return "[\(slot.id)] \(slot.prompt). One opaque 1536x1024 PNG. The app crops it to fill the iPad screen in both orientations, so keep the light in the centre and the centre calm. No text, no logos."
         case .appIcon:
@@ -172,24 +163,36 @@ enum IconPrompt {
     // MARK: 説明書（docs/アイコン制作プロンプト.md）
 
     static func document() -> String {
+        let six: [[IconSlot]] = IconCatalog.sheets(.six)
+        let detailed: [[IconSlot]] = IconCatalog.sheets(.detailed)
         var out: [String] = []
-        out.append("# アイコン制作プロンプト（ChatGPT 用・プロ向け）")
+        out.append("# アイコン制作プロンプト（開発者用・ChatGPT）")
         out.append("")
-        out.append("> このファイルは `Core/Content/IconPrompt.swift` から作っています（テスト `IconPromptTests` が中身の一致を確かめます）。アプリの「設定 > アイコン」の「プロンプトをコピー」と同じ文です。")
+        out.append("> このファイルは `Tests/DistroKitTests/IconDesign/IconPrompt.swift` から作っています（テスト `IconPromptTests` が中身の一致を確かめます）。シートの並び順は `scripts/icon_layout.json` に書き出し、取り込みのスクリプト `scripts/icon_pack.py` が使います。")
         out.append("")
-        out.append("Distro VE のボタン・道具・エフェクト・トランジションなど **\(IconCatalog.all.count) か所** の絵を、ChatGPT の画像生成で作って差し替えられます。作った画像はアプリの「設定 > アイコン」から取り込むだけで、ボタンの大きさ・色・ダーク/ライトに合わせて自動で表示されます（コードの変更は要りません）。取り込んでいないところは今までどおり SF Symbols が出ます。")
+        out.append("Distro VE のボタン・道具・エフェクト・トランジションなど **\(IconCatalog.all.count) か所** の絵は、開発者が ChatGPT の画像生成で作り、アプリに入れて配布します。アプリを使う人が作ったり取り込んだりすることはありません。絵が入っていない所は SF Symbols が出ます。")
         out.append("")
-        out.append("## 1. 流れ（いちばん早い方法）")
+        out.append("## 1. 流れ")
         out.append("")
-        out.append("1. ChatGPT で新しいチャットを開き、下の「2. 全体の決まり」から好きな絵柄の 1 つを貼って送る（「Ready」と返ってくる）。")
-        out.append("2. 「3. 6 枚の画像」の **画像 1** を貼って送る → 48 個が並んだ横長の 1 枚ができる。絵柄が気に入らなければ、ここで直してもらう（例：「線をもう少し太く」）。")
-        out.append("3. 同じチャットのまま、画像 2〜6 を順に送る（同じチャットだと絵柄がそろう）。全部で 6 枚で、アプリの中の絵 \(IconCatalog.sheetSlots.count) か所がそろいます。")
-        out.append("4. できた画像を iPad に保存し、アプリの **設定 > アイコン > シートから切り出す** で「6 枚にまとめる」と画像の番号を選んで取り込む。名前は自動で付きます。")
-        out.append("   - 1 枚に 48 個は、絵の数や順番を間違えることがあります。取り込んだあとアプリの一覧で確かめ、違う所は 1 つずつ作り直すか、その画像だけ「細かく作る（1 枚に 16 個）」で作り直してください（アプリの設定画面からプロンプトをコピーできます）。")
-        out.append("   - または、ChatGPT に「4. 切り分けの依頼」を送ると、名前の付いた PNG を ZIP でくれます。ZIP は「ファイル」アプリでタップして展開し、**設定 > アイコン > 画像を取り込む** でフォルダーごと選びます。")
-        out.append("5. アプリのアイコンは「5. アプリのアイコン」で作り、Swift Playgrounds の **App Settings > App Icon** で選ぶ。")
+        out.append("1. ChatGPT で新しいチャットを開き、「2. 全体の決まり」から絵柄を 1 つ選んで貼って送る（「Ready」と返ってくる）。")
+        out.append("2. 「3. \(six.count) 枚の画像」の **画像 1** を送る → 48 個が並んだ横長の 1 枚ができる。絵柄が気に入らなければ、ここで直してもらう（例：「線をもう少し太く」）。")
+        out.append("3. 同じチャットのまま、画像 2〜\(six.count) を順に送る（同じチャットだと絵柄がそろう）。続けて「4. アプリのアイコン」と「5. ロゴ・背景」も作る。")
+        out.append("4. できた画像を、次の名前でリポジトリの `Design/Icons/` に置く。GitHub の **Add file > Upload files** なら iPad からも置けます。PNG・JPEG・WebP のどれでも読めます。")
         out.append("")
-        out.append("取り込むときに、アプリが自動で次のことをします：背景を透明にする（白地・黒地のどちらでも）、余白を切り詰めて真ん中に同じ大きさでおさめる、単色か色付きかを見分ける（単色はアプリの文字の色で塗り、色付きはそのまま出す）。ファイル名は `edit.split.png` のほか `edit_split.png`・`01_Edit-Split@2x.png`・SF Symbols の名前（`scissors.png`）でも受け付けます。")
+        out.append("   | 画像 | ファイル名 |")
+        out.append("   | --- | --- |")
+        out.append("   | 画像 1〜\(six.count) | `sheet-1.png` 〜 `sheet-\(six.count).png` |")
+        out.append("   | アプリのアイコン | `app.icon.png`（ダーク用の `app.icon.dark.png`・色付け用の `app.icon.tinted.png` は無くてもよい） |")
+        out.append("   | ホームのロゴ | `brand.logo.png` |")
+        out.append("   | ホームの背景 | `brand.background.png` |")
+        out.append("")
+        out.append("5. `python3 scripts/icon_pack.py` を実行する（Pillow と numpy が要ります：`pip install pillow numpy`）。Claude Code に「アイコンを取り込んで」と頼んでも同じことをします。")
+        out.append("   - シートを切り分け、背景を透明にし（白地・黒地・市松模様のどれでも）、余白を切り詰めて真ん中に同じ大きさでおさめ、単色か色付きかを見分けて、`DistroVE.swiftpm/Assets.xcassets` に書き出します。単色の絵はテンプレートになり、アプリが文字の色で塗ります。")
+        out.append("   - `app.icon.png` があれば Assets の AppIcon を作り、`DistroVE.swiftpm/Package.swift` の `appIcon` を `.asset(\"AppIcon\")` にします。")
+        out.append("6. `Design/Icons/preview.png`（確認用の一覧）で、順番の違い・欠け・はみ出しを確かめる。スクリプトも、絵が無いマス・空けるはずのマスに描かれた絵・マスの端に触れている絵を知らせます。")
+        out.append("7. 直したい絵は「6. 1 つだけ作り直す」の文で作り、`Design/Icons/edit.split.png` のように名前を付けて置き、もう一度 5 を実行する。シートの中の同じ絵より、1 つずつ置いた絵が優先されます。")
+        out.append("")
+        out.append("1 枚に 48 個だと、ChatGPT が絵の数や順番を間違えることがあります。シートごと作り直すときは同じ番号でもう一度作るか、「7. 細かく作る」（1 枚に 16 個）を使ってください。")
         out.append("")
         out.append("## 2. 全体の決まり（最初に 1 回だけ貼る）")
         out.append("")
@@ -205,40 +208,29 @@ enum IconPrompt {
             out.append("```")
         }
         out.append("")
-        out.append("## 3. 6 枚の画像（1 枚に 8 列 × 6 行の 48 個）")
+        out.append("## 3. \(six.count) 枚の画像（1 枚に 8 列 × 6 行の 48 個）")
         out.append("")
-        out.append("`[ ]` の中がファイル名（拡張子なし）で、アプリの「シートから切り出す」はこの順番で名前を付けます。下の例はプロ・ラインのとき。ほかの絵柄では最後の行の `(proLine)` を選んだ絵柄の名前（`neon` など）に変えます。")
-        let six: [[IconSlot]] = IconCatalog.sheets(.six)
+        out.append("`[ ]` の中は絵の名前で、`scripts/icon_pack.py` はこの順番で切り分けます。下の例はプロ・ラインのとき。ほかの絵柄では最後の行の `(proLine)` を選んだ絵柄の名前（`neon` など）に変えます。")
         for index in 0..<six.count {
             out.append("")
-            out.append("### 画像 \(index + 1)（\(IconCatalog.sheetTitle(index, layout: .six))、\(six[index].count) 個）")
+            out.append("### 画像 \(index + 1)（`sheet-\(index + 1).png`。\(IconCatalog.sheetTitle(index, layout: .six))、\(six[index].count) 個）")
             out.append("")
             out.append("```text")
-            out.append(IconPrompt.sheet(index, style: .proLine, layout: .six))
+            out.append(sheet(index, style: .proLine, layout: .six))
             out.append("```")
         }
         out.append("")
-        out.append("1 つずつの絵をもっとはっきりさせたいときは、アプリの **設定 > アイコン** で「細かく作る（1 枚に 16 個）」を選ぶと、\(IconCatalog.sheets(.detailed).count) 枚に分けたプロンプトをコピーできます。")
-        out.append("")
-        out.append("## 4. 切り分けの依頼（ChatGPT のコード実行で ZIP にしてもらう）")
-        out.append("")
-        out.append("画像を作った直後に送ります（画像 1 の例。番号とファイル名は画像ごとに変わります。アプリの「設定 > アイコン」からは画像ごとの文をコピーできます）。")
-        out.append("")
-        out.append("```text")
-        out.append(slicing(0, layout: .six))
-        out.append("```")
-        out.append("")
-        out.append("## 5. アプリのアイコン")
+        out.append("## 4. アプリのアイコン（`app.icon.png`）")
         out.append("")
         out.append("```text")
         out.append(appIcon(.proLine))
         out.append("```")
         out.append("")
-        out.append("設定のしかた：Swift Playgrounds でこのアプリ（DistroVE.swiftpm）を開き、左上の **App Settings** → **App Icon** → 作った 1024×1024 の画像を選ぶ。Xcode で開く場合は Assets の AppIcon の Any・Dark・Tinted に 3 枚を入れます。")
+        out.append("1 枚目を `app.icon.png`、ダーク用を `app.icon.dark.png`、色付け用を `app.icon.tinted.png` として置きます。透明な所があっても、アプリのアイコン（1 枚目）は黒で埋めます（iPadOS のアイコンは透明にできないため）。")
         out.append("")
-        out.append("## 6. ロゴ・背景・イラスト")
+        out.append("## 5. ロゴ・背景・イラスト")
         out.append("")
-        out.append("ホームのロゴと背景は形が違うので、6 枚とは別に 1 枚ずつ作ります（無くてもアプリは動きます）。ファイル名を `[ ]` の中の名前にして取り込みます。はじめに（チュートリアル）の絵・プロジェクトが無いときの絵・書き出し完了の絵は画像 5 に入っています。もっと大きく描き込みたいときは、下の文で 1 枚ずつ作り直せます。")
+        out.append("ホームのロゴと背景は形が違うので、\(six.count) 枚とは別に 1 枚ずつ作ります（無くてもアプリは動きます）。はじめに（チュートリアル）の絵・プロジェクトが無いときの絵・書き出し完了の絵は画像 5 に入っています。もっと大きく描き込みたいときは、下の文で 1 枚ずつ作り直して同じ名前で置きます。")
         for slot in IconCatalog.slots(in: .brand) where slot.shape != .appIcon {
             out.append("")
             out.append("- **\(slot.title)**（`\(slot.fileName)`）")
@@ -248,7 +240,9 @@ enum IconPrompt {
             out.append("  ```")
         }
         out.append("")
-        out.append("## 7. 1 つだけ作り直す")
+        out.append("## 6. 1 つだけ作り直す")
+        out.append("")
+        out.append("`[ ]` と説明は「9. 全部の一覧」から選びます。できた画像は `Design/Icons/edit.split.png` のように名前を付けて置きます。")
         out.append("")
         out.append("```text")
         if let example = IconCatalog.slot("edit.split") {
@@ -256,11 +250,28 @@ enum IconPrompt {
         }
         out.append("```")
         out.append("")
+        out.append("## 7. 細かく作る（1 枚に 4 列 × 4 行の 16 個・\(detailed.count) 枚）")
+        out.append("")
+        out.append("1 つずつの絵をはっきりさせたいとき、またはシートの一部だけ作り直したいときに使います。`detailed-1.png` 〜 `detailed-\(detailed.count).png` の名前で置くと、\(six.count) 枚の画像の同じ絵より優先されます（全部作らなくてもかまいません）。")
+        out.append("")
+        out.append("<details>")
+        out.append("<summary>\(detailed.count) 枚のプロンプト</summary>")
+        for index in 0..<detailed.count {
+            out.append("")
+            out.append("#### `detailed-\(index + 1).png`（\(IconCatalog.sheetTitle(index, layout: .detailed))、\(detailed[index].count) 個）")
+            out.append("")
+            out.append("```text")
+            out.append(sheet(index, style: .proLine, layout: .detailed))
+            out.append("```")
+        }
+        out.append("")
+        out.append("</details>")
+        out.append("")
         out.append("## 8. 仕上がりの確認（プロの品質チェック）")
         out.append("")
-        out.append("- [ ] 背景が透明（白い四角・タイル・影が付いていない）。付いていてもアプリが消しますが、透明のほうが縁がきれい。")
-        out.append("- [ ] 線の太さ・角の丸み・余白が全部のシートで同じ（シートを並べて見比べる）。")
-        out.append("- [ ] 20pt（iPad の道具バーの大きさ）でも形が分かる。アプリの「設定 > アイコン」の一覧で小さく表示して確かめる。")
+        out.append("- [ ] 背景が透明（白い四角・タイル・影が付いていない）。付いていてもスクリプトが消しますが、透明のほうが縁がきれい。")
+        out.append("- [ ] 線の太さ・角の丸み・余白が全部のシートで同じ（`preview.png` で見比べる）。")
+        out.append("- [ ] 20pt（iPad の道具バーの大きさ）でも形が分かる（`preview.png` の右上の小さな絵で確かめる）。")
         out.append("- [ ] 文字・番号・名前が絵に入っていない（`[edit.split]` などを描いてしまったら作り直す）。")
         out.append("- [ ] 似た道具が見分けられる（削除とリップル削除、分割と無音カット、フェードと黒フェードなど）。")
         out.append("- [ ] 他社のロゴや SF Symbols をなぞっていない（YouTube・TikTok・Instagram のマークは使わない）。")

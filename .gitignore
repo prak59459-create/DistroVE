@@ -7,3 +7,5 @@ xcuserdata/
 .DS_Store
 __pycache__/
 *.pyc
+# アイコンの確認用の一覧（scripts/icon_pack.py が作る）
+Design/Icons/preview.png

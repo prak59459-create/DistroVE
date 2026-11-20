@@ -620,7 +620,7 @@ final class TimelineCanvasView: UIView, UIGestureRecognizerDelegate {
                 let r: CGRect = headerButtonRect(row: row, index: i)
                 let tint: UIColor = button.active ? Theme.accentUI : Theme.subtextUI
                 if let custom = IconStore.shared.tinted(button.icon, color: tint) {
-                    // 取り込んだアイコン（設定 > アイコン）
+                    // アプリに入れたアイコン（Assets.xcassets）
                     custom.draw(in: r.insetBy(dx: 4, dy: 4))
                 } else {
                     let config = UIImage.SymbolConfiguration(pointSize: 12, weight: .medium)

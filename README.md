@@ -34,7 +34,7 @@ App Store に出すときは、Swift Playgrounds の「App Store Connect にア�
 | 入出力 | MP4・MOV・HEVC・MP3・WAV・M4A・FLAC・JPG・PNG・HEIC・GIF の読み込み。MKV・WebM・AVI・Ogg・FLV・MPEG-TS・M2TS（AVCHD）は取り込むときに MP4 に変換（VP8・Vorbis は Swift で書いた解読器、中の字幕も読む）。MP4（H.264 / H.265）と GIF の書き出し、480p〜4K・24〜120fps、YouTube・TikTok・Instagram のプリセット、透かしなし |
 | プロジェクト | 独自形式 `.disve`（JSON）、素材は「コピー」か「参照」を選べる、自動バックアップ（最大 20 世代）、フォルダー同期（iCloud Drive など）、テンプレート 8 種（GitHub から追加可） |
 | 安全・性能 | プロキシ編集、プレビュー画質の切り替え、発熱・低電力時の自動軽量化、容量不足の警告、キャッシュの自動削除、クラッシュ後の復元、クラッシュログ（端末内） |
-| アイコン | ボタン・道具・エフェクト・トランジションなど 283 か所の絵を、ChatGPT などで作った画像に差し替えられる（設定 > アイコン）。ChatGPT で作る画像は 6 枚（1 枚に 8 列 × 6 行の 48 個。細かく作るときは 4×4 の 20 枚も選べる）と、アプリのアイコン・ロゴ・背景の 3 枚。背景の透明化・大きさのそろえ・シートの切り分けは自動。プロ向けのプロンプトは [docs/アイコン制作プロンプト.md](docs/アイコン制作プロンプト.md) |
+| アイコン | ボタン・道具・エフェクト・トランジションなど 283 か所の絵は、開発者が ChatGPT で作ってアプリに入れて配る（使う人が作ることはない）。作る画像は 6 枚（1 枚に 8 列 × 6 行の 48 個）と、アプリのアイコン・ロゴ・背景の 3 枚。`Design/Icons/` に置いて `scripts/icon_pack.py` を実行すると、切り分け・背景の透明化・大きさのそろえ・単色か色付きかの見分けをして `Assets.xcassets` に入れる。絵が無い所は SF Symbols。プロ向けのプロンプトは [docs/アイコン制作プロンプト.md](docs/アイコン制作プロンプト.md) |
 | 操作 | 経験に合わせた見せ方（かんたん・ふつう・プロ）、端末の性能に合わせた設定（3 段階を自動で判定）、ツールバーの並べ替え・非表示、タッチ・Apple Pencil・キーボードショートカット（変更可）・マウス／トラックパッド、ダーク／ライト、文字サイズ、色覚に配慮した配色、パネル位置の変更、VoiceOver（タイムラインはクリップ 1 つずつ操作できる） |
 
 計画書の各項目（Q 番号）との対応と、まだできていないことは [docs/計画との対応.md](docs/計画との対応.md) にまとめています。
@@ -55,7 +55,8 @@ DistroVE.swiftpm/          Swift Playgrounds で開くアプリ本体（1 モジ
 Package.swift              開発用パッケージ（Core と Engine を DistroKit としてビルド・テスト）
 Tests/DistroKitTests/      テスト（Linux で Core、macOS では Engine も実際に動かす）
 content/                   GitHub から配るデータ（テンプレート・LUT）と一覧 manifest.json
-scripts/                   ビルド時間の計測、配布データの一覧作成など
+Design/Icons/              アイコンの元の画像（開発者が ChatGPT で作って置く）
+scripts/                   ビルド時間の計測、配布データの一覧作成、アイコンの取り込みなど
 docs/                      計画との対応、ビルド時間、設計メモ
 ```
 
@@ -81,6 +82,12 @@ scripts/ios-build.sh
 
 ```bash
 python3 scripts/update-content-manifest.py
+```
+
+ChatGPT で作ったアイコンの画像を `Design/Icons/` に置いたら、アプリの Assets に入れます（Pillow と numpy が要ります。作り方は [docs/アイコン制作プロンプト.md](docs/アイコン制作プロンプト.md)）。
+
+```bash
+python3 scripts/icon_pack.py
 ```
 
 ## GitHub からの更新について
