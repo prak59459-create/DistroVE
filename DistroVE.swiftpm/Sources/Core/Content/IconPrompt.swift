@@ -159,9 +159,9 @@ enum IconPrompt {
     static func brand(_ slot: IconSlot, style: IconStyle) -> String {
         switch slot.shape {
         case .wide:
-            return "[\(slot.id)] \(slot.prompt). Transparent PNG, 1536x512 (3:1), no text, same family as the icons (\(style.rawValue))."
+            return "[\(slot.id)] \(slot.prompt). One 1536x1024 PNG with a fully transparent background; draw the emblem as one horizontal 3:1 shape across the middle and leave the rest empty (the app trims it). No text, same family as the icons (\(style.rawValue))."
         case .backdrop:
-            return "[\(slot.id)] \(slot.prompt). Opaque PNG, 2048x1536 (4:3, used on iPad in both orientations, keep the centre calm). No text, no logos."
+            return "[\(slot.id)] \(slot.prompt). One opaque 1536x1024 PNG. The app crops it to fill the iPad screen in both orientations, so keep the light in the centre and the centre calm. No text, no logos."
         case .appIcon:
             return appIcon(style)
         case .square:
