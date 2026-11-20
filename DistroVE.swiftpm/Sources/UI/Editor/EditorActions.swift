@@ -194,20 +194,54 @@ extension EditorController {
     func importFiles(_ urls: [URL], copy: Bool, asOverlay: Bool, autoProxy: Bool) {
         runJob("取り込み") { controller, progress in
             var assets: [MediaAsset] = []
-            var failures: [String] = []
+            var messages: [String] = []
+            var subtitles: [UUID: [SubtitleCue]] = [:]
+            let count: Double = Double(max(1, urls.count))
             for (i, url) in urls.enumerated() {
+                let base: Double = Double(i)
                 do {
-                    assets.append(try await MediaStore.shared.importFile(at: url, copy: copy))
+                    if MediaFormatSupport.convertedExtensions.contains(url.pathExtension.lowercased()) {
+                        // MKV・WebM・AVI（Q71）は MP4 に変えてから取り込む
+                        let made: MediaStore.ConvertedImport = try await MediaStore.shared.importConverted(at: url) { p in progress((base + p) / count) }
+                        assets.append(made.asset)
+                        if !made.subtitles.isEmpty { subtitles[made.asset.id] = made.subtitles }
+                        messages.append(contentsOf: made.notes.map { url.lastPathComponent + "：" + $0 })
+                    } else {
+                        assets.append(try await MediaStore.shared.importFile(at: url, copy: copy))
+                    }
                 } catch {
-                    failures.append(url.lastPathComponent + "：" + error.localizedDescription)
+                    messages.append(url.lastPathComponent + "：" + error.localizedDescription)
                 }
-                progress(Double(i + 1) / Double(max(1, urls.count)))
+                progress((base + 1) / count)
             }
             controller.addAssets(assets, asOverlay: asOverlay, autoProxy: autoProxy)
-            if !failures.isEmpty {
-                controller.alert = EditorAlert(title: "読み込めなかったファイル", message: failures.joined(separator: "\n"))
+            controller.addEmbeddedSubtitles(subtitles)
+            if !messages.isEmpty {
+                controller.alert = EditorAlert(title: "取り込みのお知らせ", message: messages.joined(separator: "\n"))
             }
         }
+    }
+
+    /// ファイルの中にあった字幕を、そのクリップの位置に合わせて足す。
+    func addEmbeddedSubtitles(_ subtitles: [UUID: [SubtitleCue]]) {
+        if subtitles.isEmpty { return }
+        var added: Int = 0
+        apply("字幕を読み込む") { p in
+            var cues: [SubtitleCue] = []
+            for (mediaID, list) in subtitles {
+                guard let clip = p.tracks.flatMap({ $0.clips }).first(where: { $0.mediaID == mediaID }) else { continue }
+                let shift: Time = clip.start - clip.sourceStart
+                for cue in list {
+                    var moved: SubtitleCue = cue
+                    moved.start = cue.start + shift
+                    moved.end = cue.end + shift
+                    cues.append(moved)
+                }
+            }
+            added = cues.count
+            if !cues.isEmpty { p.setCues(cues, replace: false) }
+        }
+        if added > 0 { showToast("ファイルの中の字幕を \(added) 件読み込みました") }
     }
 
     func importPhotos(_ items: [PhotosPickerItem], asOverlay: Bool, autoProxy: Bool) {

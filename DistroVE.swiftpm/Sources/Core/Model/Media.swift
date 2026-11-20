@@ -113,14 +113,17 @@ struct MediaAsset: Identifiable, Hashable, Codable, Sendable {
     }
 }
 
-/// 読み込める形式の判定（Q71）。MKV / WebM / AVI は iPad 標準の仕組みで読めないため、現時点では案内だけ出す。
+/// 読み込める形式の判定（Q71）。MKV・WebM・AVI は入れ物を Swift で読み、MP4 に変えて取り込む。
 enum MediaFormatSupport {
     static let videoExtensions: Set<String> = ["mp4", "mov", "m4v", "hevc", "3gp"]
     static let audioExtensions: Set<String> = ["mp3", "wav", "m4a", "aac", "aif", "aiff", "caf", "flac"]
     static let imageExtensions: Set<String> = ["jpg", "jpeg", "png", "heic", "heif", "webp", "tif", "tiff", "bmp"]
     static let gifExtensions: Set<String> = ["gif"]
     static let modelExtensions: Set<String> = ["usdz", "usd", "usda", "usdc", "obj", "stl", "ply", "abc"]
-    static let unsupportedExtensions: Set<String> = ["mkv", "webm", "avi", "wmv", "flv"]
+    /// 入れ物を Swift で読んで MP4 に変える形式（ForeignContainer）
+    static let convertedExtensions: Set<String> = ["mkv", "mka", "mks", "webm", "avi"]
+    /// 中身（WMV・RealVideo・Theora など）を端末の仕組みで解読できない形式
+    static let unsupportedExtensions: Set<String> = ["wmv", "asf", "flv", "rm", "rmvb", "ogv"]
 
     static func kind(forExtension ext: String) -> MediaKind? {
         let lower: String = ext.lowercased()
@@ -129,13 +132,14 @@ enum MediaFormatSupport {
         if gifExtensions.contains(lower) { return .gif }
         if imageExtensions.contains(lower) { return .image }
         if modelExtensions.contains(lower) { return .model3D }
+        if convertedExtensions.contains(lower) { return lower == "mka" ? .audio : .video }
         return nil
     }
 
     static func unsupportedReason(forExtension ext: String) -> String? {
         let lower: String = ext.lowercased()
         if unsupportedExtensions.contains(lower) {
-            return "\(lower.uppercased()) 形式は現在読み込めません。MP4 または MOV に変換してから取り込んでください。"
+            return "\(lower.uppercased()) 形式の映像は iPad の仕組みで解読できないため読み込めません。MP4 または MOV に変換してから取り込んでください。"
         }
         if kind(forExtension: lower) == nil {
             return "この形式（.\(lower)）には対応していません。"

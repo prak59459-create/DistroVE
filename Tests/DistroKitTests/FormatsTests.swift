@@ -160,7 +160,10 @@ final class FormatsTests: XCTestCase {
     func testMediaFormatSupport() {
         XCTAssertEqual(MediaFormatSupport.kind(forExtension: "MOV"), .video)
         XCTAssertEqual(MediaFormatSupport.kind(forExtension: "gif"), .gif)
-        XCTAssertNotNil(MediaFormatSupport.unsupportedReason(forExtension: "mkv"))
+        XCTAssertNil(MediaFormatSupport.unsupportedReason(forExtension: "mkv"), "MKV は変換して取り込む")
+        XCTAssertEqual(MediaFormatSupport.kind(forExtension: "webm"), .video)
+        XCTAssertEqual(MediaFormatSupport.kind(forExtension: "mka"), .audio)
+        XCTAssertNotNil(MediaFormatSupport.unsupportedReason(forExtension: "wmv"))
         XCTAssertNil(MediaFormatSupport.unsupportedReason(forExtension: "mp4"))
     }
 }

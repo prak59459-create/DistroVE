@@ -160,9 +160,12 @@ final class FrameInterpolator: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard let smallA = downscaled(a), let smallB = downscaled(b) else { return [] }
-        let forward: CVPixelBuffer = try FrameInterpolator.flow(from: smallA, to: smallB, accuracy: accuracy)
-        let backward: CVPixelBuffer = try FrameInterpolator.flow(from: smallB, to: smallA, accuracy: accuracy)
-        if convention == nil {
+        let forward: FlowField = try flowField(from: smallA, to: smallB, accuracy: accuracy)
+        let backward: FlowField = try flowField(from: smallB, to: smallA, accuracy: accuracy)
+        if method == .builtin {
+            // 自前の推定は「A の各点が B で動いた先（画素）」と決まっている
+            convention = FlowConvention(sign: 1, normalized: false)
+        } else if convention == nil {
             convention = FrameInterpolator.calibrate(a: smallA, b: smallB, flow: forward)
         }
         let used: FlowConvention = convention ?? FlowConvention(sign: 1, normalized: false)
@@ -170,8 +173,8 @@ final class FrameInterpolator: @unchecked Sendable {
               let texA = metalTexture(a, write: false), let texB = metalTexture(b, write: false),
               let sourceA = CVMetalTextureGetTexture(texA), let sourceB = CVMetalTextureGetTexture(texB),
               let commands = queue.makeCommandBuffer() else { return [] }
-        let flowWidth: Float = Float(CVPixelBufferGetWidth(forward))
-        let flowHeight: Float = Float(CVPixelBufferGetHeight(forward))
+        let flowWidth: Float = Float(forward.width)
+        let flowHeight: Float = Float(forward.height)
         let scale: SIMD2<Float> = used.normalized ? SIMD2<Float>(used.sign, used.sign)
             : SIMD2<Float>(used.sign / flowWidth, used.sign / flowHeight)
         let sigma: Float = max(1, 2.5 * Float(CVPixelBufferGetHeight(a)) / 1080)
@@ -214,30 +217,90 @@ final class FrameInterpolator: @unchecked Sendable {
 
     // MARK: 動き（Vision）
 
-    /// handler の絵（from）と targeted の絵（to）の間の動き。向きと単位は calibrate で確かめる。
-    static func flow(from a: CVPixelBuffer, to b: CVPixelBuffer, accuracy: VNGenerateOpticalFlowRequest.ComputationAccuracy) throws -> CVPixelBuffer {
+    /// 動きの求め方。Vision の新しい版 → 古い版 → 自前（Lucas–Kanade）の順に試し、使えたものを続けて使う。
+    enum FlowMethod: Equatable {
+        case vision(revision: Int?)
+        case builtin
+    }
+
+    /// 使えた求め方（1 回の書き出しのあいだ覚えておく）
+    private(set) var method: FlowMethod?
+
+    private func flowField(from a: CVPixelBuffer, to b: CVPixelBuffer, accuracy: VNGenerateOpticalFlowRequest.ComputationAccuracy) throws -> FlowField {
+        let all: [FlowMethod] = [.vision(revision: nil), .vision(revision: VNGenerateOpticalFlowRequestRevision1), .builtin]
+        // うまくいった求め方を先に。だめならほかも試す
+        let order: [FlowMethod] = method.map { known in [known] + all.filter { $0 != known } } ?? all
+        for candidate in order {
+            switch candidate {
+            case .vision(let revision):
+                if let field = try? FrameInterpolator.visionFlow(from: a, to: b, accuracy: accuracy, revision: revision) {
+                    method = candidate
+                    return field
+                }
+            case .builtin:
+                guard let grayA = FrameInterpolator.gray(a), let grayB = FrameInterpolator.gray(b) else { break }
+                method = .builtin
+                return OpticalFlowLK.flow(from: grayA, to: grayB)
+            }
+        }
+        throw EngineError.unsupported("動きを解析できません")
+    }
+
+    /// handler の絵（from）と targeted の絵（to）の間の動き（Vision）。向きと単位は calibrate で確かめる。
+    static func visionFlow(from a: CVPixelBuffer, to b: CVPixelBuffer, accuracy: VNGenerateOpticalFlowRequest.ComputationAccuracy,
+                           revision: Int?) throws -> FlowField {
         let request = VNGenerateOpticalFlowRequest(targetedCVPixelBuffer: b, options: [:])
+        if let r = revision { request.revision = r }
         request.computationAccuracy = accuracy
         request.outputPixelFormat = kCVPixelFormatType_TwoComponent32Float
         let handler = VNImageRequestHandler(cvPixelBuffer: a, options: [:])
         try handler.perform([request])
         guard let observation = request.results?.first else { throw EngineError.unsupported("動きを解析できません") }
-        return observation.pixelBuffer
+        return try FrameInterpolator.field(from: observation.pixelBuffer)
+    }
+
+    /// 2 成分の 32bit 浮動小数の絵を FlowField にする。
+    static func field(from buffer: CVPixelBuffer) throws -> FlowField {
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard let reader = FlowReader(buffer) else { throw EngineError.unsupported("動きを読めません") }
+        var vectors: [Float] = Array(repeating: 0, count: reader.width * reader.height * 2)
+        for y in 0..<reader.height {
+            for x in 0..<reader.width {
+                let v: (Double, Double) = reader.value(Double(x), Double(y))
+                vectors[(y * reader.width + x) * 2] = Float(v.0)
+                vectors[(y * reader.width + x) * 2 + 1] = Float(v.1)
+            }
+        }
+        return FlowField(width: reader.width, height: reader.height, vectors: vectors)
+    }
+
+    /// BGRA の絵の明るさ（自前の推定用）。
+    static func gray(_ buffer: CVPixelBuffer) -> GrayImage? {
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard let reader = LumaReader(buffer) else { return nil }
+        var pixels: [Float] = Array(repeating: 0, count: reader.width * reader.height)
+        for y in 0..<reader.height {
+            for x in 0..<reader.width {
+                pixels[y * reader.width + x] = Float(reader.value(Double(x), Double(y)))
+            }
+        }
+        return GrayImage(width: reader.width, height: reader.height, pixels: pixels)
     }
 
     /// 向き（±）と単位（画素・割合）の 4 通りのうち、A(x) ≈ B(x + F(x)) をいちばんよく満たすもの。動きが小さすぎれば nil。
-    static func calibrate(a: CVPixelBuffer, b: CVPixelBuffer, flow: CVPixelBuffer) -> FlowConvention? {
+    static func calibrate(a: CVPixelBuffer, b: CVPixelBuffer, flow: FlowField) -> FlowConvention? {
         let candidates: [FlowConvention] = [FlowConvention(sign: 1, normalized: false), FlowConvention(sign: -1, normalized: false),
                                             FlowConvention(sign: 1, normalized: true), FlowConvention(sign: -1, normalized: true)]
         CVPixelBufferLockBaseAddress(a, .readOnly)
         CVPixelBufferLockBaseAddress(b, .readOnly)
-        CVPixelBufferLockBaseAddress(flow, .readOnly)
         defer {
             CVPixelBufferUnlockBaseAddress(a, .readOnly)
             CVPixelBufferUnlockBaseAddress(b, .readOnly)
-            CVPixelBufferUnlockBaseAddress(flow, .readOnly)
         }
-        guard let imageA = LumaReader(a), let imageB = LumaReader(b), let field = FlowReader(flow) else { return nil }
+        guard let imageA = LumaReader(a), let imageB = LumaReader(b) else { return nil }
+        let field: FlowField = flow
         var errors: [Double] = Array(repeating: 0, count: candidates.count)
         var baseline: Double = 0
         let steps: Int = 40
@@ -247,7 +310,9 @@ final class FrameInterpolator: @unchecked Sendable {
                 let y: Double = Double(imageA.height * j) / Double(steps)
                 let lumaA: Double = imageA.value(x, y)
                 baseline += abs(lumaA - imageB.value(x, y))
-                let f: (Double, Double) = field.value(x * Double(field.width) / Double(imageA.width), y * Double(field.height) / Double(imageA.height))
+                let sample: (dx: Float, dy: Float) = field.at(Int(x * Double(field.width) / Double(imageA.width)),
+                                                            Int(y * Double(field.height) / Double(imageA.height)))
+                let f: (Double, Double) = (Double(sample.dx), Double(sample.dy))
                 for (k, c) in candidates.enumerated() {
                     let dx: Double = c.normalized ? f.0 * Double(imageA.width) : f.0 * Double(imageA.width) / Double(field.width)
                     let dy: Double = c.normalized ? f.1 * Double(imageA.height) : f.1 * Double(imageA.height) / Double(field.height)
@@ -291,16 +356,15 @@ final class FrameInterpolator: @unchecked Sendable {
         return small
     }
 
-    private func flowTexture(_ buffer: CVPixelBuffer) -> MTLTexture? {
-        let w: Int = CVPixelBufferGetWidth(buffer)
-        let h: Int = CVPixelBufferGetHeight(buffer)
-        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rg32Float, width: w, height: h, mipmapped: false)
+    private func flowTexture(_ field: FlowField) -> MTLTexture? {
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rg32Float, width: field.width, height: field.height, mipmapped: false)
         d.usage = .shaderRead
         guard let texture = device.makeTexture(descriptor: d) else { return nil }
-        CVPixelBufferLockBaseAddress(buffer, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
-        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return nil }
-        texture.replace(region: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0, withBytes: base, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer))
+        field.vectors.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            guard let base = raw.baseAddress else { return }
+            texture.replace(region: MTLRegionMake2D(0, 0, field.width, field.height), mipmapLevel: 0, withBytes: base,
+                            bytesPerRow: field.width * 2 * MemoryLayout<Float>.size)
+        }
         return texture
     }
 

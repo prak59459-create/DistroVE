@@ -90,6 +90,9 @@ final class MediaStore: @unchecked Sendable {
         if let reason = MediaFormatSupport.unsupportedReason(forExtension: ext) {
             throw EngineError.unsupported(reason)
         }
+        if MediaFormatSupport.convertedExtensions.contains(ext.lowercased()) {
+            return try await importConverted(at: source, progress: nil).asset
+        }
         guard let kind = MediaFormatSupport.kind(forExtension: ext) else {
             throw EngineError.unsupported(ext)
         }
@@ -110,6 +113,30 @@ final class MediaStore: @unchecked Sendable {
         asset.fileSize = AppPaths.fileSize(fileURL)
         try await probe(&asset, url: fileURL)
         return asset
+    }
+
+    struct ConvertedImport {
+        let asset: MediaAsset
+        /// ファイルの中にあった字幕（素材の時刻）
+        let subtitles: [SubtitleCue]
+        let notes: [String]
+    }
+
+    /// MKV・WebM・AVI を MP4（音声だけなら M4A）に変えて取り込む（Q71）。元のファイルは残さない。
+    func importConverted(at source: URL, progress: (@Sendable (Double) -> Void)?) async throws -> ConvertedImport {
+        let scoped: Bool = source.startAccessingSecurityScopedResource()
+        defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+        #if canImport(VideoToolbox)
+        let result: ForeignMediaConverter.Result = try await ForeignMediaConverter.convert(source, into: AppPaths.media, progress: progress)
+        var asset = MediaAsset(kind: result.kind, name: source.deletingPathExtension().lastPathComponent, storage: .copied)
+        asset.relativePath = result.url.lastPathComponent
+        asset.fileSize = AppPaths.fileSize(result.url)
+        try await probe(&asset, url: result.url)
+        asset.codec = asset.codec.isEmpty ? result.container : asset.codec + "（" + result.container + " から変換）"
+        return ConvertedImport(asset: asset, subtitles: result.subtitles, notes: result.notes)
+        #else
+        throw EngineError.unsupported(source.pathExtension)
+        #endif
     }
 
     /// アプリ内で作ったファイル（すでに Media フォルダーにある）を素材にする。
