@@ -80,4 +80,31 @@ fi
 if over "$incremental" 10; then
   echo "::warning title=ビルド時間::差分ビルドが目標の 10 秒を超えました（${incremental} 秒）"
 fi
+
+# アプリに入れたアイコン（Assets.xcassets）が、アプリ本体（Bundle.main）の Assets.car に入っているか。
+# アプリは UIImage(named:) で本体から探すので、別の bundle に入ると SF Symbols のままになる。
+if [ -d Assets.xcassets ]; then
+  app="$(find "$DERIVED/Build/Products" -maxdepth 2 -name "*.app" -type d | head -1)"
+  if [ -z "$app" ] || [ ! -f "$app/Assets.car" ]; then
+    echo "::error title=アイコン::アプリ本体に Assets.car がありません（${app:-アプリが見つからない}）"
+    find "$DERIVED/Build/Products" -name "Assets.car" | head -5
+    exit 1
+  fi
+  xcrun assetutil --info "$app/Assets.car" > "$LOG.assets" 2> /dev/null
+  python3 - "$LOG.assets" Assets.xcassets <<'PY'
+import json, os, sys
+info = json.load(open(sys.argv[1]))
+entries = [e for e in info if isinstance(e, dict) and e.get("AssetType") == "Image"]
+names = {e.get("Name") for e in entries}
+expected = sorted(n[: -len(".imageset")] for _, dirs, _ in os.walk(sys.argv[2]) for n in dirs if n.endswith(".imageset"))
+missing = [n for n in expected if n not in names]
+sample = next((e for e in entries if e.get("Name") == "edit_split"), None)
+modes = {k: v for k, v in (sample or {}).items() if "emplate" in k or k in ("Name", "Scale", "PixelWidth")}
+print(f"--- アイコン: Assets.car（アプリ本体）に {len(expected) - len(missing)} / {len(expected)} 個 {modes} ---")
+if missing:
+    print("::error title=アイコン::Assets.car に無い絵: " + ", ".join(missing[:10]))
+    sys.exit(1)
+PY
+  [ $? -eq 0 ] || exit 1
+fi
 exit 0

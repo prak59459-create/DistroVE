@@ -430,6 +430,7 @@ class Report:
     icons: dict[str, Icon] = field(default_factory=dict)
     app_icon: dict[str, Image.Image] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
     read: list[str] = field(default_factory=list)
     package_updated: bool = False
 
@@ -461,7 +462,7 @@ def read_sheet(path: str, label: str, entry: dict, names: list[str], info: dict[
             if peak > 0 and float(mass[position]) > peak * 0.02:
                 report.warn(f"{label}: {axis}の切れ目（{position} px）に絵がかかっています。マスの数や並びがずれているかもしれません。")
                 break
-    count = 0
+    made_here: list[tuple[str, Icon]] = []
     for position, cell in enumerate(sheet.cells):
         row, column = position // columns + 1, position % columns + 1
         where = f"{label} の {row} 行 {column} 列目"
@@ -481,9 +482,25 @@ def read_sheet(path: str, label: str, entry: dict, names: list[str], info: dict[
         if made is None:
             continue
         made.source = f"{label} r{row}c{column}"
+        made_here.append((icon_id, made))
+    match_sheet_style(label, made_here, report)
+    for icon_id, made in made_here:
         report.icons[icon_id] = made
-        count += 1
-    report.read.append(f"{label}（{columns}×{rows}）: {count} 個")
+    report.read.append(f"{label}（{columns}×{rows}）: {len(made_here)} 個")
+
+
+def match_sheet_style(label: str, icons: list[tuple[str, Icon]], report: Report) -> None:
+    """シートの 9 割以上が単色なら、残りも単色にそろえる。
+    単色の絵柄でも、色のにじみを描いた絵（RGB のずれなど）が色付きと見えることがある。色付きのまま出すと、
+    白い線がライトモードで見えなくなるので、シートに合わせて単色（アプリが文字の色で塗る）にする。"""
+    colored = [icon_id for icon_id, icon in icons if icon.color]
+    if not colored or (len(icons) - len(colored)) * 10 < len(icons) * 9:
+        return
+    for _, icon in icons:
+        if icon.color:
+            icon.pixels = whiten(icon.pixels)
+            icon.color = False
+    report.notes.append(f"{label}: 色付きと見えた {len(colored)} 個（{'、'.join(colored)}）を、シートのほかの絵に合わせて単色にしました。")
 
 
 def read_single(path: str, icon_id: str, info: dict, fill: float, report: Report) -> None:
@@ -728,6 +745,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"絵が無い所（SF Symbols のまま）: {len(missing)} か所  {shown}")
     if "main" in report.app_icon:
         print("アプリのアイコン: AppIcon を作りました" + ("（Package.swift を .asset(\"AppIcon\") にしました）" if report.package_updated else ""))
+    for note in report.notes:
+        print("そろえた所  " + note)
     for warning in report.warnings:
         print("気になる所  " + warning)
     print(f"確認用の一覧: {preview}")

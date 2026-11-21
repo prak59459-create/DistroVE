@@ -242,6 +242,18 @@ class BuildTests(unittest.TestCase):
         self.assertTrue(any(self.names[-1] in w and "絵がありません" in w for w in report.warnings), report.warnings)
         self.assertNotIn(self.names[-1], report.icons)
 
+    def test_a_lone_colour_icon_in_a_monochrome_sheet_becomes_monochrome(self):
+        # 白い絵ばかりのシートに、1 つだけ色のにじんだ絵（RGB のずれの絵など）
+        a = self.sheet(len(self.names))
+        cx, cy = 3 * 96 + 48, int(512 / 12)
+        disk(a, cx, cy, 24, ORANGE)
+        disk(a, cx, cy, 14, CLEAR)
+        save(a, os.path.join(self.source, "sheet-1.png"))
+        report = self.run_build()
+        self.assertFalse(any(icon.color for icon in report.icons.values()))
+        self.assertTrue(any(self.names[3] in note for note in report.notes), report.notes)
+        self.assertEqual(self.contents(self.names[3])["properties"]["template-rendering-intent"], "template")
+
     def test_no_images_writes_nothing(self):
         report = self.run_build()
         self.assertEqual(report.icons, {})
